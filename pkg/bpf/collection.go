@@ -150,6 +150,10 @@ type CollectionOptions struct {
 
 	// Set of objects to keep during reachability pruning.
 	Keep *set.Set[string]
+
+	// TokenFD is the file descriptor for a BPF token to use for loading.
+	// If -1, no token is used.
+	TokenFD int
 }
 
 func (co *CollectionOptions) populateMapReplacements() {
@@ -229,6 +233,12 @@ func LoadCollection(logger *slog.Logger, spec *ebpf.CollectionSpec, opts *Collec
 	// Find and strip all CILIUM_PIN_REPLACE pinning flags before creating the
 	// Collection. ebpf-go will reject maps with pins it doesn't recognize.
 	toReplace := consumePinReplace(spec)
+
+	// Set BPF token FD for program and map loading if provided
+	if opts.TokenFD > 0 {
+		opts.CollectionOptions.Programs.TokenFD = opts.TokenFD
+		opts.CollectionOptions.Maps.TokenFD = opts.TokenFD
+	}
 
 	// Attempt to load the Collection.
 	coll, err := ebpf.NewCollectionWithOptions(spec, opts.CollectionOptions)
