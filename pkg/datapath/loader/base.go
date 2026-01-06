@@ -228,6 +228,7 @@ func (l *loader) reinitializeIPSec(lnc *datapath.LocalNodeConfiguration) error {
 			Maps: ebpf.MapOptions{PinPath: bpf.TCGlobalsPath()},
 		},
 		Constants: config.NewBPFNetwork(nodeConfig(lnc)),
+		TokenFD:   l.bpfTokenFD,
 	})
 	if err != nil {
 		return err

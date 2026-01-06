@@ -83,6 +83,10 @@ type loader struct {
 	compilationLock    datapath.CompilationLock
 	configWriter       datapath.ConfigWriter
 	nodeConfigNotifier *manager.NodeConfigNotifier
+
+	// bpfTokenFD is the file descriptor for the BPF token for unprivileged BPF operations.
+	// If -1, token-based loading is not used.
+	bpfTokenFD int
 }
 
 type Params struct {
@@ -94,6 +98,7 @@ type Params struct {
 	CompilationLock    datapath.CompilationLock
 	ConfigWriter       datapath.ConfigWriter
 	NodeConfigNotifier *manager.NodeConfigNotifier
+	Config             *option.DaemonConfig
 
 	// Force map initialisation before loader. You should not use these otherwise.
 	// Some of the entries in this slice may be nil.
@@ -102,6 +107,15 @@ type Params struct {
 
 // newLoader returns a new loader.
 func newLoader(p Params) *loader {
+	// Try to open BPF token for unprivileged BPF operations
+	tokenFD, err := bpf.OpenBPFToken(p.Config.BPFTokenPath)
+	if err != nil {
+		p.Logger.Warn("Failed to open BPF token, using privileged mode", "error", err)
+		tokenFD = -1
+	} else if tokenFD > 0 {
+		p.Logger.Info("BPF token support enabled", "tokenFD", tokenFD)
+	}
+
 	return &loader{
 		logger:             p.Logger,
 		templateCache:      newObjectCache(p.Logger, p.ConfigWriter, filepath.Join(option.Config.StateDir, defaults.TemplatesDir)),
@@ -111,6 +125,7 @@ func newLoader(p Params) *loader {
 		compilationLock:    p.CompilationLock,
 		configWriter:       p.ConfigWriter,
 		nodeConfigNotifier: p.NodeConfigNotifier,
+		bpfTokenFD:         tokenFD,
 	}
 }
 
@@ -371,6 +386,7 @@ func attachCiliumHost(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.L
 		},
 		Constants:  co,
 		MapRenames: renames,
+		TokenFD:    l.bpfTokenFD,
 	})
 	if err != nil {
 		return err
@@ -446,6 +462,7 @@ func attachCiliumNet(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.Lo
 		},
 		Constants:  co,
 		MapRenames: renames,
+		TokenFD:    l.bpfTokenFD,
 	})
 	if err != nil {
 		return err
@@ -508,6 +525,7 @@ func attachNetworkDevices(logger *slog.Logger, ep datapath.Endpoint, lnc *datapa
 			},
 			Constants:  co,
 			MapRenames: renames,
+			TokenFD:    l.bpfTokenFD,
 		})
 		if err != nil {
 			return err
@@ -609,6 +627,7 @@ func reloadEndpoint(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.Loc
 		},
 		Constants:  co,
 		MapRenames: renames,
+		TokenFD:    l.bpfTokenFD,
 	})
 	if err != nil {
 		return err
@@ -704,6 +723,7 @@ func replaceOverlayDatapath(ctx context.Context, logger *slog.Logger, lnc *datap
 		CollectionOptions: ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{PinPath: bpf.TCGlobalsPath()},
 		},
+		TokenFD: l.bpfTokenFD,
 	})
 	if err != nil {
 		return err
@@ -753,6 +773,7 @@ func replaceWireguardDatapath(ctx context.Context, logger *slog.Logger, lnc *dat
 		CollectionOptions: ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{PinPath: bpf.TCGlobalsPath()},
 		},
+		TokenFD: l.bpfTokenFD,
 	})
 	if err != nil {
 		return err
