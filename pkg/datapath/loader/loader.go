@@ -93,6 +93,10 @@ type loader struct {
 	db           *statedb.DB
 	devices      statedb.Table[*tables.Device]
 	routeManager *routeReconciler.DesiredRouteManager
+
+	// bpfTokenFD is the file descriptor for the BPF token for unprivileged BPF operations.
+	// If -1, token-based loading is not used.
+	bpfTokenFD int
 }
 
 type Params struct {
@@ -109,6 +113,7 @@ type Params struct {
 	DB                 *statedb.DB
 	Devices            statedb.Table[*tables.Device]
 	EPRestorer         promise.Promise[endpointstate.Restorer]
+	Config             *option.DaemonConfig
 
 	// Force map initialisation before loader. You should not use these otherwise.
 	// Some of the entries in this slice may be nil.
@@ -117,6 +122,15 @@ type Params struct {
 
 // newLoader returns a new loader.
 func newLoader(p Params) *loader {
+	// Try to open BPF token for unprivileged BPF operations
+	tokenFD, err := bpf.OpenBPFToken(p.Config.BPFTokenPath)
+	if err != nil {
+		p.Logger.Warn("Failed to open BPF token, using privileged mode", "error", err)
+		tokenFD = -1
+	} else if tokenFD > 0 {
+		p.Logger.Info("BPF token support enabled", "tokenFD", tokenFD)
+	}
+
 	registerRouteInitializer(p)
 	return &loader{
 		logger:             p.Logger,
@@ -129,8 +143,9 @@ func newLoader(p Params) *loader {
 		nodeConfigNotifier: p.NodeConfigNotifier,
 		routeManager:       p.RouteManager,
 
-		db:      p.DB,
-		devices: p.Devices,
+		db:         p.DB,
+		devices:    p.Devices,
+		bpfTokenFD: tokenFD,
 	}
 }
 
@@ -396,17 +411,17 @@ func removeObsoleteNetdevPrograms(logger *slog.Logger, devices []string) error {
 
 // reloadHostEndpoint (re)attaches programs from bpf_host.c to cilium_host,
 // cilium_net and external (native) devices.
-func reloadHostEndpoint(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec) error {
+func reloadHostEndpoint(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec, tokenFD int) error {
 	// Replace programs on cilium_host.
-	if err := attachCiliumHost(logger, ep, lnc, spec); err != nil {
+	if err := attachCiliumHost(logger, ep, lnc, spec, tokenFD); err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
 
-	if err := attachCiliumNet(logger, ep, lnc, spec); err != nil {
+	if err := attachCiliumNet(logger, ep, lnc, spec, tokenFD); err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
 
-	if err := attachNetworkDevices(logger, ep, lnc, spec); err != nil {
+	if err := attachNetworkDevices(logger, ep, lnc, spec, tokenFD); err != nil {
 		return fmt.Errorf("attaching cilium_host: %w", err)
 	}
 
@@ -461,7 +476,7 @@ func ciliumHostRewrites(ep datapath.EndpointConfiguration, lnc *datapath.LocalNo
 
 // attachCiliumHost inserts the host endpoint's policy program into the global
 // cilium_call_policy map and attaches programs from bpf_host.c to cilium_host.
-func attachCiliumHost(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec) error {
+func attachCiliumHost(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec, tokenFD int) error {
 	host, err := safenetlink.LinkByName(ep.InterfaceName())
 	if err != nil {
 		return fmt.Errorf("retrieving device %s: %w", ep.InterfaceName(), err)
@@ -476,6 +491,7 @@ func attachCiliumHost(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.L
 		},
 		Constants:  co,
 		MapRenames: renames,
+		TokenFD:    tokenFD,
 	})
 	if err != nil {
 		return err
@@ -552,7 +568,7 @@ func ciliumNetRewrites(ep datapath.EndpointConfiguration, lnc *datapath.LocalNod
 }
 
 // attachCiliumNet attaches programs from bpf_host.c to cilium_net.
-func attachCiliumNet(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec) error {
+func attachCiliumNet(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec, tokenFD int) error {
 	net, err := safenetlink.LinkByName(defaults.SecondHostDevice)
 	if err != nil {
 		return fmt.Errorf("retrieving device %s: %w", defaults.SecondHostDevice, err)
@@ -567,6 +583,7 @@ func attachCiliumNet(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.Lo
 		},
 		Constants:  co,
 		MapRenames: renames,
+		TokenFD:    tokenFD,
 	})
 	if err != nil {
 		return err
@@ -589,7 +606,7 @@ func attachCiliumNet(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.Lo
 // attachNetworkDevices attaches programs from bpf_host.c to externally-facing
 // devices and the wireguard device. Attaches cil_from_netdev to ingress and
 // optionally cil_to_netdev to egress if enabled features require it.
-func attachNetworkDevices(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec) error {
+func attachNetworkDevices(logger *slog.Logger, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec, tokenFD int) error {
 	devices := lnc.DeviceNames()
 
 	// Selectively attach bpf_host to cilium_ipip{4,6} in order to have a
@@ -629,6 +646,7 @@ func attachNetworkDevices(logger *slog.Logger, ep datapath.Endpoint, lnc *datapa
 			},
 			Constants:  co,
 			MapRenames: renames,
+			TokenFD:    tokenFD,
 		})
 		if err != nil {
 			return err
@@ -730,7 +748,7 @@ func endpointRewrites(ep datapath.EndpointConfiguration, lnc *datapath.LocalNode
 //
 // spec is modified by the method and it is the callers responsibility to copy
 // it if necessary.
-func reloadEndpoint(logger *slog.Logger, db *statedb.DB, devices statedb.Table[*tables.Device], rm *routeReconciler.DesiredRouteManager, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec) error {
+func reloadEndpoint(logger *slog.Logger, db *statedb.DB, devices statedb.Table[*tables.Device], rm *routeReconciler.DesiredRouteManager, ep datapath.Endpoint, lnc *datapath.LocalNodeConfiguration, spec *ebpf.CollectionSpec, tokenFD int) error {
 	device := ep.InterfaceName()
 
 	co, renames := endpointRewrites(ep, lnc)
@@ -742,6 +760,7 @@ func reloadEndpoint(logger *slog.Logger, db *statedb.DB, devices statedb.Table[*
 		},
 		Constants:  co,
 		MapRenames: renames,
+		TokenFD:    tokenFD,
 	})
 	if err != nil {
 		return err
@@ -815,7 +834,7 @@ func reloadEndpoint(logger *slog.Logger, db *statedb.DB, devices statedb.Table[*
 	return nil
 }
 
-func replaceOverlayDatapath(ctx context.Context, logger *slog.Logger, lnc *datapath.LocalNodeConfiguration, cArgs []string, device netlink.Link) error {
+func replaceOverlayDatapath(ctx context.Context, logger *slog.Logger, lnc *datapath.LocalNodeConfiguration, cArgs []string, device netlink.Link, tokenFD int) error {
 	if err := compileOverlay(ctx, logger, cArgs); err != nil {
 		return fmt.Errorf("compiling overlay program: %w", err)
 	}
@@ -847,6 +866,7 @@ func replaceOverlayDatapath(ctx context.Context, logger *slog.Logger, lnc *datap
 		CollectionOptions: ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{PinPath: bpf.TCGlobalsPath()},
 		},
+		TokenFD: tokenFD,
 	})
 	if err != nil {
 		return err
@@ -870,7 +890,7 @@ func replaceOverlayDatapath(ctx context.Context, logger *slog.Logger, lnc *datap
 	return nil
 }
 
-func replaceWireguardDatapath(ctx context.Context, logger *slog.Logger, lnc *datapath.LocalNodeConfiguration, device netlink.Link) (err error) {
+func replaceWireguardDatapath(ctx context.Context, logger *slog.Logger, lnc *datapath.LocalNodeConfiguration, device netlink.Link, tokenFD int) (err error) {
 	if err := compileWireguard(ctx, logger); err != nil {
 		return fmt.Errorf("compiling wireguard program: %w", err)
 	}
@@ -897,6 +917,7 @@ func replaceWireguardDatapath(ctx context.Context, logger *slog.Logger, lnc *dat
 		CollectionOptions: ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{PinPath: bpf.TCGlobalsPath()},
 		},
+		TokenFD: tokenFD,
 	})
 	if err != nil {
 		return err
@@ -969,7 +990,7 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep datapath.Endpoint, lnc *
 	if ep.IsHost() {
 		// Reload bpf programs on cilium_host and cilium_net.
 		stats.BpfLoadProg.Start()
-		err = reloadHostEndpoint(l.logger, ep, lnc, spec)
+		err = reloadHostEndpoint(l.logger, ep, lnc, spec, l.bpfTokenFD)
 		stats.BpfLoadProg.End(err == nil)
 
 		l.hostDpInitializedOnce.Do(func() {
@@ -982,7 +1003,7 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep datapath.Endpoint, lnc *
 
 	// Reload an lxc endpoint program.
 	stats.BpfLoadProg.Start()
-	err = reloadEndpoint(l.logger, l.db, l.devices, l.routeManager, ep, lnc, spec)
+	err = reloadEndpoint(l.logger, l.db, l.devices, l.routeManager, ep, lnc, spec, l.bpfTokenFD)
 	stats.BpfLoadProg.End(err == nil)
 	return hash, err
 }
