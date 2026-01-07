@@ -43,9 +43,8 @@ type MapOptions struct {
 	PinPath        string
 	LoadPinOptions LoadPinOptions
 
-	// TokenFD is the file descriptor for a BPF token to use for map creation.
-	// If -1, no token is used. This allows unprivileged map creation when the
-	// token has been created from a BPFFS mount with appropriate delegation.
+	// TokenFD is the file descriptor of a BPF token for unprivileged
+	// map creation in user namespaces. Set to -1 to disable.
 	TokenFD int
 }
 

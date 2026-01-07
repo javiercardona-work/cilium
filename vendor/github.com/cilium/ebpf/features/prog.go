@@ -14,18 +14,6 @@ import (
 	"github.com/cilium/ebpf/internal/unix"
 )
 
-// globalTokenFD stores a BPF token FD for use by feature probes.
-// Set via SetGlobalToken() before any probes are executed.
-// If -1, no token is used.
-var globalTokenFD int = -1
-
-// SetGlobalToken sets a BPF token FD to be used by all feature probes.
-// Must be called before any feature probing functions are invoked.
-// Pass -1 to disable token usage.
-func SetGlobalToken(fd int) {
-	globalTokenFD = fd
-}
-
 // HaveProgType probes the running kernel for the availability of the specified program type.
 //
 // Deprecated: use HaveProgramType() instead.
@@ -48,8 +36,10 @@ func probeProgram(spec *ebpf.ProgramSpec) error {
 	opts := ebpf.ProgramOptions{
 		LogDisabled: true,
 	}
-	if globalTokenFD > 0 {
-		opts.TokenFD = globalTokenFD
+	// Use global BPF token if available
+	tokenFD := GetGlobalToken()
+	if tokenFD > 0 {
+		opts.TokenFD = tokenFD
 	}
 	prog, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err == nil {
@@ -63,6 +53,11 @@ func probeProgram(spec *ebpf.ProgramSpec) error {
 	// to support the given prog type.
 	case errors.Is(err, unix.EINVAL), errors.Is(err, unix.E2BIG):
 		err = ebpf.ErrNotSupported
+	// EPERM with a BPF token means the kernel knows about this but the token
+	// doesn't grant permission - treat as supported for feature detection.
+	// Without a token, EPERM is a real permission error and should propagate.
+	case tokenFD > 0 && errors.Is(err, unix.EPERM):
+		err = nil
 	}
 
 	return err
@@ -154,14 +149,18 @@ var haveProgramTypeMatrix = internal.FeatureMatrix[ebpf.ProgramType]{
 			}
 
 			// create target prog
+			targetOpts := ebpf.ProgramOptions{
+				LogDisabled: true,
+			}
+			if tokenFD := GetGlobalToken(); tokenFD > 0 {
+				targetOpts.TokenFD = tokenFD
+			}
 			prog, err := ebpf.NewProgramWithOptions(
 				&ebpf.ProgramSpec{
 					Type:         ebpf.XDP,
 					Instructions: insns,
 				},
-				ebpf.ProgramOptions{
-					LogDisabled: true,
-				},
+				targetOpts,
 			)
 			if err != nil {
 				return err
@@ -290,15 +289,23 @@ func haveProgramHelper(pt ebpf.ProgramType, helper asm.BuiltinFunc) error {
 		spec.AttachType = ebpf.AttachNetfilter
 	}
 
-	opts := ebpf.ProgramOptions{
+	helperOpts := ebpf.ProgramOptions{
 		LogLevel: 1,
 	}
-	if globalTokenFD > 0 {
-		opts.TokenFD = globalTokenFD
+	tokenFD := GetGlobalToken()
+	if tokenFD > 0 {
+		helperOpts.TokenFD = tokenFD
 	}
-	prog, err := ebpf.NewProgramWithOptions(spec, opts)
+	prog, err := ebpf.NewProgramWithOptions(spec, helperOpts)
 	if err == nil {
 		prog.Close()
+	}
+
+	// EPERM with a BPF token means the kernel knows about this but the token
+	// doesn't grant permission - treat as supported for feature detection.
+	// Without a token, EPERM is a real permission error and should propagate.
+	if tokenFD > 0 && errors.Is(err, unix.EPERM) {
+		return nil
 	}
 
 	var verr *ebpf.VerifierError

@@ -10,6 +10,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/features"
 	"github.com/cilium/ebpf/link"
 	"golang.org/x/sys/unix"
 )
@@ -32,10 +33,22 @@ var HaveAttachCgroup = sync.OnceValue(func() error {
 		},
 	}
 
-	p, err := ebpf.NewProgramWithOptions(spec, ebpf.ProgramOptions{
+	opts := ebpf.ProgramOptions{
 		LogDisabled: true,
-	})
+	}
+	// Use global BPF token if available
+	tokenFD := features.GetGlobalToken()
+	if tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+	p, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err != nil {
+		// EPERM with a token means the kernel knows about cgroup progs but
+		// the token doesn't allow it - treat as supported for feature detection.
+		// Without a token, EPERM is a real permission error.
+		if tokenFD > 0 && errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return fmt.Errorf("create cgroup program: %w: %w", err, ebpf.ErrNotSupported)
 	}
 	defer p.Close()
@@ -47,6 +60,11 @@ var HaveAttachCgroup = sync.OnceValue(func() error {
 	if errors.Is(err, unix.EBADF) {
 		// The kernel checked the given file descriptor from within the cgroup prog
 		// attach handler. Assume it supports attaching cgroup progs.
+		return nil
+	}
+	// EPERM with a token means the kernel knows about this but the token
+	// doesn't grant permission - treat as supported for feature detection.
+	if tokenFD > 0 && errors.Is(err, unix.EPERM) {
 		return nil
 	}
 	if err != nil {

@@ -50,9 +50,15 @@ func HaveAttachType(pt ebpf.ProgramType, at ebpf.AttachType) (err error) {
 		},
 	}
 
-	prog, err := ebpf.NewProgramWithOptions(spec, ebpf.ProgramOptions{
+	opts := ebpf.ProgramOptions{
 		LogDisabled: true,
-	})
+	}
+	// Use global BPF token if available
+	tokenFD := features.GetGlobalToken()
+	if tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err == nil {
 		prog.Close()
 	}
@@ -63,6 +69,12 @@ func HaveAttachType(pt ebpf.ProgramType, at ebpf.AttachType) (err error) {
 	// to support the given prog type.
 	if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.E2BIG) {
 		err = ebpf.ErrNotSupported
+	}
+	// EPERM with a BPF token means the kernel knows about this but the token
+	// doesn't grant permission - treat as supported for feature detection.
+	// Without a token, EPERM is a real permission error and should propagate.
+	if tokenFD > 0 && errors.Is(err, unix.EPERM) {
+		err = nil
 	}
 	if err != nil {
 		return err

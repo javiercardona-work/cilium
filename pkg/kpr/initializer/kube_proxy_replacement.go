@@ -18,7 +18,9 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/features"
 
+	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/datapath/linux/probes"
 	"github.com/cilium/cilium/pkg/datapath/linux/sysctl"
 	"github.com/cilium/cilium/pkg/datapath/tables"
@@ -43,6 +45,13 @@ type kprInitializer struct {
 }
 
 func (r *kprInitializer) InitKubeProxyReplacementOptions() error {
+	// Initialize global BPF token for feature probes before running any probes.
+	// This must happen before probing kernel features to ensure probes use the token.
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		features.SetGlobalToken(tokenFD)
+		r.logger.Info("BPF token support enabled for KPR feature probes", "tokenFD", tokenFD)
+	}
+
 	if !r.kprCfg.KubeProxyReplacement {
 		option.Config.EnableHostLegacyRouting = true
 	}
