@@ -24,6 +24,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	"github.com/cilium/cilium/pkg/bpf/token"
 	bpfgen "github.com/cilium/cilium/pkg/datapath/bpf"
 	"github.com/cilium/cilium/pkg/logging"
 	"github.com/cilium/cilium/pkg/logging/logfields"
@@ -153,14 +154,21 @@ func HaveV3ISA(logger *slog.Logger) error {
 }
 
 func newProgram(progType ebpf.ProgramType) (*ebpf.Program, error) {
-	prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
+	spec := &ebpf.ProgramSpec{
 		Type: progType,
 		Instructions: asm.Instructions{
 			asm.Mov.Imm(asm.R0, 0),
 			asm.Return(),
 		},
 		License: "Apache-2.0",
-	})
+	}
+
+	opts := ebpf.ProgramOptions{}
+	if tokenFD := token.GetGlobalToken(); tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+
+	prog, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err != nil {
 		return nil, fmt.Errorf("loading bpf program: %w: %w", err, ErrNotSupported)
 	}
@@ -341,7 +349,12 @@ func HaveSKBAdjustRoomL2RoomMACSupport(logger *slog.Logger) (err error) {
 		asm.FnSkbAdjustRoom.Call(),
 		asm.Return(),
 	}
-	prog, err := ebpf.NewProgram(progSpec)
+
+	opts := ebpf.ProgramOptions{}
+	if tokenFD := token.GetGlobalToken(); tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(progSpec, opts)
 	if err != nil {
 		return err
 	}
@@ -401,7 +414,11 @@ func HaveDeadCodeElim() error {
 		},
 	}
 
-	prog, err := ebpf.NewProgram(&spec)
+	progOpts := ebpf.ProgramOptions{}
+	if tokenFD := token.GetGlobalToken(); tokenFD > 0 {
+		progOpts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(&spec, progOpts)
 	if err != nil {
 		return fmt.Errorf("loading program: %w", err)
 	}
