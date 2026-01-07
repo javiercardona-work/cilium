@@ -6,6 +6,7 @@ package bpf
 import (
 	"errors"
 	"os"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -21,7 +22,22 @@ const (
 // tokenPaths are the paths to check for BPF tokens, in order of preference
 var tokenPaths = []string{
 	"/run/bpf_delegation", // Common delegation path
+	"/run/tw/bpf",         // Tupperware BPF delegation path
 	"/sys/fs/bpf",         // Default BPFFS mount
+}
+
+// globalTokenFD stores the global BPF token for use by probes and other early code
+var globalTokenFD int = -1
+var globalTokenOnce sync.Once
+
+// GetGlobalToken returns the global BPF token FD, opening it if necessary.
+// Returns -1 if no token is available.
+func GetGlobalToken() int {
+	globalTokenOnce.Do(func() {
+		fd, _ := OpenBPFToken("")
+		globalTokenFD = fd
+	})
+	return globalTokenFD
 }
 
 // OpenBPFToken opens a BPF token from the configured or discovered path.
