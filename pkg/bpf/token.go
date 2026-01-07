@@ -28,15 +28,24 @@ var tokenPaths = []string{
 
 // globalTokenFD stores the global BPF token for use by probes and other early code
 var globalTokenFD int = -1
-var globalTokenOnce sync.Once
+var globalTokenMu sync.Mutex
 
 // GetGlobalToken returns the global BPF token FD, opening it if necessary.
-// Returns -1 if no token is available.
+// Returns -1 if no token is available. Retries if previous attempt failed.
 func GetGlobalToken() int {
-	globalTokenOnce.Do(func() {
-		fd, _ := OpenBPFToken("")
+	globalTokenMu.Lock()
+	defer globalTokenMu.Unlock()
+
+	// If we already have a valid token, return it
+	if globalTokenFD > 0 {
+		return globalTokenFD
+	}
+
+	// Try to open a token (retry if previous attempt failed)
+	fd, _ := OpenBPFToken("")
+	if fd > 0 {
 		globalTokenFD = fd
-	})
+	}
 	return globalTokenFD
 }
 

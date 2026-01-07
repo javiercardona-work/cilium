@@ -33,11 +33,6 @@ import (
 var tpl = template.New("headerfile")
 
 func init() {
-	// Set global token for features package probes
-	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
-		features.SetGlobalToken(tokenFD)
-	}
-
 	const content = `
 /* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
 /* Copyright Authors of Cilium */
@@ -497,6 +492,14 @@ func CreateHeaderFiles(headerDir string, probes *FeatureProbes) error {
 // Further needed probes should be added here, while new macro strings need to
 // be added in the correct `write*Header()` function.
 func ExecuteHeaderProbes(logger *slog.Logger) *FeatureProbes {
+	// Initialize global BPF token for feature probes.
+	// This must happen here (not in init()) because the BPFFS may not be
+	// mounted during package initialization.
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		features.SetGlobalToken(tokenFD)
+		logger.Info("BPF token support enabled for feature probes", "tokenFD", tokenFD)
+	}
+
 	probes := FeatureProbes{
 		ProgramHelpers: make(map[ProgramHelper]bool),
 	}
