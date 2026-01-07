@@ -44,9 +44,8 @@ type MapOptions struct {
 	PinPath        string
 	LoadPinOptions LoadPinOptions
 
-	// TokenFD is the file descriptor for a BPF token to use for map creation.
-	// If -1, no token is used. This allows unprivileged map creation when the
-	// token has been created from a BPFFS mount with appropriate delegation.
+	// TokenFD is the file descriptor of a BPF token for unprivileged
+	// map creation in user namespaces. Set to -1 to disable.
 	TokenFD int
 }
 
@@ -397,7 +396,7 @@ func newMapWithOptions(spec *MapSpec, opts MapOptions) (_ *Map, err error) {
 			return nil, errors.New("inner maps cannot be pinned")
 		}
 
-		template, err := spec.InnerMap.createMap(nil, &opts)
+		template, err := spec.InnerMap.createMap(nil, opts.TokenFD)
 		if err != nil {
 			return nil, fmt.Errorf("inner map: %w", err)
 		}
@@ -409,7 +408,7 @@ func newMapWithOptions(spec *MapSpec, opts MapOptions) (_ *Map, err error) {
 		innerFd = template.fd
 	}
 
-	m, err := spec.createMap(innerFd, &opts)
+	m, err := spec.createMap(innerFd, opts.TokenFD)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +503,7 @@ func (m *Map) memorySize() (int, error) {
 
 // createMap validates the spec's properties and creates the map in the kernel
 // using the given opts. It does not populate or freeze the map.
-func (spec *MapSpec) createMap(inner *sys.FD, opts *MapOptions) (_ *Map, err error) {
+func (spec *MapSpec) createMap(inner *sys.FD, tokenFD int) (_ *Map, err error) {
 	closeOnError := func(closer io.Closer) {
 		if err != nil {
 			closer.Close()
@@ -539,11 +538,11 @@ func (spec *MapSpec) createMap(inner *sys.FD, opts *MapOptions) (_ *Map, err err
 		MaxEntries: spec.MaxEntries,
 		MapFlags:   spec.Flags,
 		NumaNode:   spec.NumaNode,
+		MapTokenFd: int32(tokenFD),
 	}
 
-	// Set BPF token for map creation if provided
-	if opts != nil && opts.TokenFD > 0 {
-		attr.MapTokenFd = int32(opts.TokenFD)
+	// If a BPF token is provided, set the flag to tell the kernel to use it
+	if tokenFD > 0 {
 		attr.MapFlags |= sys.BPF_F_TOKEN_FD
 	}
 

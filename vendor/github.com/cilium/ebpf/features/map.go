@@ -77,6 +77,12 @@ func probeMap(attr *sys.MapCreateAttr) error {
 }
 
 func createMap(attr *sys.MapCreateAttr) error {
+	// Use global BPF token if available
+	tokenFD := GetGlobalToken()
+	if tokenFD > 0 {
+		attr.MapTokenFd = int32(tokenFD)
+	}
+
 	fd, err := sys.MapCreate(attr)
 	if err == nil {
 		fd.Close()
@@ -90,6 +96,11 @@ func createMap(attr *sys.MapCreateAttr) error {
 	// to support the given map type.
 	case errors.Is(err, unix.EINVAL), errors.Is(err, unix.E2BIG):
 		return ebpf.ErrNotSupported
+	// EPERM with a BPF token means the kernel knows about this but the token
+	// doesn't grant permission - treat as supported for feature detection.
+	// Without a token, EPERM is a real permission error and should propagate.
+	case tokenFD > 0 && errors.Is(err, unix.EPERM):
+		return nil
 	}
 
 	return err

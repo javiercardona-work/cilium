@@ -18,7 +18,9 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/features"
 
+	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/datapath/linux/probes"
 	"github.com/cilium/cilium/pkg/datapath/linux/sysctl"
 	"github.com/cilium/cilium/pkg/datapath/tables"
@@ -42,6 +44,13 @@ import (
 // if this function cannot determine the strictness an error is returned and the boolean
 // is false. If an error is returned the boolean is of no meaning.
 func initKubeProxyReplacementOptions(logger *slog.Logger, sysctl sysctl.Sysctl, tunnelConfig tunnel.Config, lbConfig loadbalancer.Config, kprCfg kpr.KPRConfig) error {
+	// Initialize global BPF token for feature probes before running any probes.
+	// This must happen before probing kernel features to ensure probes use the token.
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		features.SetGlobalToken(tokenFD)
+		logger.Info("BPF token support enabled for KPR feature probes", "tokenFD", tokenFD)
+	}
+
 	if !kprCfg.EnableNodePort {
 		option.Config.EnableHostLegacyRouting = true
 	}
