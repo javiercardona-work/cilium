@@ -14,7 +14,7 @@ const (
 )
 
 // GetGlobalToken returns the global BPF token FD, opening it if necessary.
-// Returns -1 if no token is available.
+// Returns -1 if no token is available. Retries if previous attempt failed.
 func GetGlobalToken() int {
 	return token.GetGlobalToken()
 }
