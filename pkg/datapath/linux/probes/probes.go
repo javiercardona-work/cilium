@@ -33,6 +33,11 @@ import (
 var tpl = template.New("headerfile")
 
 func init() {
+	// Set global token for features package probes
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		features.SetGlobalToken(tokenFD)
+	}
+
 	const content = `
 /* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
 /* Copyright Authors of Cilium */

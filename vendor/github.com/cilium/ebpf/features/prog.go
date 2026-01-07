@@ -14,6 +14,18 @@ import (
 	"github.com/cilium/ebpf/internal/unix"
 )
 
+// globalTokenFD stores a BPF token FD for use by feature probes.
+// Set via SetGlobalToken() before any probes are executed.
+// If -1, no token is used.
+var globalTokenFD int = -1
+
+// SetGlobalToken sets a BPF token FD to be used by all feature probes.
+// Must be called before any feature probing functions are invoked.
+// Pass -1 to disable token usage.
+func SetGlobalToken(fd int) {
+	globalTokenFD = fd
+}
+
 // HaveProgType probes the running kernel for the availability of the specified program type.
 //
 // Deprecated: use HaveProgramType() instead.
@@ -33,9 +45,13 @@ func probeProgram(spec *ebpf.ProgramSpec) error {
 			asm.Return(),
 		}
 	}
-	prog, err := ebpf.NewProgramWithOptions(spec, ebpf.ProgramOptions{
+	opts := ebpf.ProgramOptions{
 		LogDisabled: true,
-	})
+	}
+	if globalTokenFD > 0 {
+		opts.TokenFD = globalTokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err == nil {
 		prog.Close()
 	}
@@ -274,9 +290,13 @@ func haveProgramHelper(pt ebpf.ProgramType, helper asm.BuiltinFunc) error {
 		spec.AttachType = ebpf.AttachNetfilter
 	}
 
-	prog, err := ebpf.NewProgramWithOptions(spec, ebpf.ProgramOptions{
+	opts := ebpf.ProgramOptions{
 		LogLevel: 1,
-	})
+	}
+	if globalTokenFD > 0 {
+		opts.TokenFD = globalTokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err == nil {
 		prog.Close()
 	}
