@@ -137,6 +137,13 @@ func updateTCX(logger *slog.Logger, prog *ebpf.Program, progName, bpffsDir strin
 // hasCiliumTCXLinks returns true if device has a Cilium-managed tcx program
 // with the given attach type.
 func hasCiliumTCXLinks(device netlink.Link, attach ebpf.AttachType) (bool, error) {
+	// In restricted mode (user namespace with BPF token), skip BPF_PROG_QUERY
+	// which will fail with EPERM. Assume programs are loaded to avoid
+	// false positive watchdog triggers.
+	if bpf.InRestrictedMode() {
+		return true, nil
+	}
+
 	result, err := link.QueryPrograms(link.QueryOptions{
 		Target: int(device.Attrs().Index),
 		Attach: attach,

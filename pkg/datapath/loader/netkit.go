@@ -155,6 +155,14 @@ func hasCiliumNetkitLinks(device netlink.Link, attach ebpf.AttachType) (bool, er
 		// Not a netkit device, therefore also no netkit links.
 		return false, nil
 	}
+
+	// In restricted mode (user namespace with BPF token), skip BPF_PROG_QUERY
+	// which will fail with EPERM. Assume programs are loaded to avoid
+	// false positive watchdog triggers.
+	if bpf.InRestrictedMode() {
+		return true, nil
+	}
+
 	result, err := link.QueryPrograms(link.QueryOptions{
 		Target: int(device.Attrs().Index),
 		Attach: attach,

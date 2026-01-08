@@ -9,6 +9,7 @@ import (
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/platform"
 	"github.com/cilium/ebpf/internal/sys"
+	"github.com/cilium/ebpf/internal/token"
 	"github.com/cilium/ebpf/internal/unix"
 )
 
@@ -54,6 +55,12 @@ func NewHandleFromRawBTF(btf []byte) (*Handle, error) {
 	attr := &sys.BtfLoadAttr{
 		Btf:     sys.SlicePointer(btf),
 		BtfSize: uint32(len(btf)),
+	}
+
+	// Use global BPF token if available
+	if tokenFD := token.GetGlobalToken(); tokenFD > 0 {
+		attr.BtfTokenFd = int32(tokenFD)
+		attr.BtfFlags = sys.BPF_F_TOKEN_FD
 	}
 
 	var (

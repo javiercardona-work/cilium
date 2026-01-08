@@ -179,6 +179,11 @@ func newProgram(progType ebpf.ProgramType) (*ebpf.Program, error) {
 var HaveBPF = sync.OnceValue(func() error {
 	prog, err := newProgram(ebpf.SocketFilter)
 	if err != nil {
+		// If we get EPERM with a BPF token, it means the kernel supports BPF
+		// but the token doesn't grant sufficient permissions - treat as supported.
+		if token.InRestrictedMode() && errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return err
 	}
 	defer prog.Close()
@@ -191,12 +196,27 @@ var HaveBPF = sync.OnceValue(func() error {
 var HaveBPFJIT = sync.OnceValue(func() error {
 	prog, err := newProgram(ebpf.SocketFilter)
 	if err != nil {
+		// If we get EPERM with a BPF token, it means the kernel supports this
+		// but the token doesn't grant sufficient permissions - treat as supported.
+		if token.InRestrictedMode() && errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return err
 	}
 	defer prog.Close()
 
+	// In restricted mode (user namespace with BPF token), skip introspection
+	// syscalls that will fail with EPERM. The program loaded successfully,
+	// so we can assume JIT is available.
+	if token.InRestrictedMode() {
+		return nil
+	}
+
 	info, err := prog.Info()
 	if err != nil {
+		if errors.Is(err, ebpf.ErrRestrictedKernel) {
+			return nil
+		}
 		return fmt.Errorf("get prog info: %w", err)
 	}
 	if _, err := info.JitedSize(); err != nil && !errors.Is(err, ebpf.ErrRestrictedKernel) {
@@ -422,15 +442,27 @@ func HaveDeadCodeElim() error {
 	if err != nil {
 		return fmt.Errorf("loading program: %w", err)
 	}
+	defer prog.Close()
+
+	// In restricted mode (user namespace with BPF token), skip introspection
+	// syscalls that will fail with EPERM. The program loaded successfully,
+	// so we can assume dead code elimination is supported.
+	if token.InRestrictedMode() {
+		return nil
+	}
 
 	info, err := prog.Info()
 	if err != nil {
+		if errors.Is(err, ebpf.ErrRestrictedKernel) {
+			return nil
+		}
 		return fmt.Errorf("get prog info: %w", err)
 	}
 	infoInst, err := info.Instructions()
-	if errors.Is(err, ebpf.ErrRestrictedKernel) {
-		return nil
-	} else if err != nil {
+	if err != nil {
+		if errors.Is(err, ebpf.ErrRestrictedKernel) {
+			return nil
+		}
 		return fmt.Errorf("get instructions: %w", err)
 	}
 
@@ -459,6 +491,12 @@ func HaveIPv6Support() error {
 // BPF_FIB_LOOKUP_SKIP_NEIGH flag for bpf_fib_lookup.
 // https://lore.kernel.org/bpf/20230217205515.3583372-1-martin.lau@linux.dev/
 var HaveFibLookupSkipNeigh = sync.OnceValue(func() error {
+	// In restricted mode (user namespace with BPF token), assume the feature
+	// is supported since the kernel is new enough (BPF tokens require 6.9+).
+	if token.InRestrictedMode() {
+		return nil
+	}
+
 	var objs bpfgen.ProbesObjects
 
 	err := bpfgen.LoadProbesObjects(&objs, &ebpf.CollectionOptions{})
@@ -469,6 +507,11 @@ var HaveFibLookupSkipNeigh = sync.OnceValue(func() error {
 		}
 	}
 	if err != nil {
+		// EPERM in user namespace means we can't load probe program,
+		// but the kernel likely supports the feature.
+		if errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return fmt.Errorf("loading collection: %w", err)
 	}
 
@@ -604,6 +647,12 @@ func writeFeatureHeader(writer io.Writer, features map[string]bool, common bool)
 
 // HaveBatchAPI checks if kernel supports batched bpf map lookup API.
 func HaveBatchAPI() error {
+	// In restricted mode (user namespace with BPF token), assume batch API
+	// is supported since the kernel is new enough (BPF tokens require 6.9+).
+	if token.InRestrictedMode() {
+		return nil
+	}
+
 	spec := ebpf.MapSpec{
 		Type:       ebpf.LRUHash,
 		KeySize:    1,
@@ -612,6 +661,11 @@ func HaveBatchAPI() error {
 	}
 	m, err := ebpf.NewMapWithOptions(&spec, ebpf.MapOptions{})
 	if err != nil {
+		// EPERM in user namespace means we can't create map for probing,
+		// but the kernel likely supports the feature.
+		if errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return ErrNotSupported
 	}
 	defer m.Close()
