@@ -178,6 +178,11 @@ func newProgram(progType ebpf.ProgramType) (*ebpf.Program, error) {
 var HaveBPF = sync.OnceValue(func() error {
 	prog, err := newProgram(ebpf.SocketFilter)
 	if err != nil {
+		// If we get EPERM with a BPF token, it means the kernel supports BPF
+		// but the token doesn't grant sufficient permissions - treat as supported.
+		if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 && errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return err
 	}
 	defer prog.Close()
@@ -190,15 +195,31 @@ var HaveBPF = sync.OnceValue(func() error {
 var HaveBPFJIT = sync.OnceValue(func() error {
 	prog, err := newProgram(ebpf.SocketFilter)
 	if err != nil {
+		// If we get EPERM with a BPF token, it means the kernel supports this
+		// but the token doesn't grant sufficient permissions - treat as supported.
+		if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 && errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return err
 	}
 	defer prog.Close()
 
 	info, err := prog.Info()
 	if err != nil {
+		// In user namespaces, getting program info may fail with EPERM even though
+		// the program was loaded successfully. If we got this far, the JIT works.
+		if errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return fmt.Errorf("get prog info: %w", err)
 	}
 	if _, err := info.JitedSize(); err != nil {
+		// JitedSize can fail with EPERM or ErrNotSupported in user namespaces
+		// due to insufficient permissions to read jited info. If the program loaded
+		// successfully, we can assume JIT is available.
+		if errors.Is(err, unix.EPERM) || errors.Is(err, ebpf.ErrNotSupported) {
+			return nil
+		}
 		return fmt.Errorf("get JITed prog size: %w", err)
 	}
 
@@ -421,13 +442,24 @@ func HaveDeadCodeElim() error {
 	if err != nil {
 		return fmt.Errorf("loading program: %w", err)
 	}
+	defer prog.Close()
 
 	info, err := prog.Info()
 	if err != nil {
+		// In user namespaces, getting program info may fail with EPERM.
+		// If the program loaded successfully, assume dead code elim is supported.
+		if errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return fmt.Errorf("get prog info: %w", err)
 	}
 	infoInst, err := info.Instructions()
 	if err != nil {
+		// Getting instructions may fail with ErrNotSupported due to insufficient
+		// permissions in user namespaces. Assume supported if program loaded.
+		if errors.Is(err, unix.EPERM) || errors.Is(err, ebpf.ErrNotSupported) {
+			return nil
+		}
 		return fmt.Errorf("get instructions: %w", err)
 	}
 

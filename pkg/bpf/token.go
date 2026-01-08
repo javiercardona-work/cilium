@@ -5,10 +5,12 @@ package bpf
 
 import (
 	"errors"
+	"log"
 	"os"
 	"sync"
 	"unsafe"
 
+	"github.com/cilium/ebpf/features"
 	"golang.org/x/sys/unix"
 )
 
@@ -29,23 +31,30 @@ var tokenPaths = []string{
 // globalTokenFD stores the global BPF token for use by probes and other early code
 var globalTokenFD int = -1
 var globalTokenMu sync.Mutex
+var globalTokenInitialized bool
 
-// GetGlobalToken returns the global BPF token FD, opening it if necessary.
-// Returns -1 if no token is available. Retries if previous attempt failed.
-func GetGlobalToken() int {
-	globalTokenMu.Lock()
-	defer globalTokenMu.Unlock()
-
-	// If we already have a valid token, return it
-	if globalTokenFD > 0 {
-		return globalTokenFD
-	}
-
-	// Try to open a token (retry if previous attempt failed)
-	fd, _ := OpenBPFToken("")
-	if fd > 0 {
+// init tries to initialize the BPF token as early as possible.
+// This runs during package initialization, before main() starts.
+// If the token cannot be obtained, we log and continue in privileged mode.
+func init() {
+	fd, err := OpenBPFToken("")
+	if err != nil || fd <= 0 {
+		// Token not available - continue in privileged mode
+		log.Printf("BPF token not available, using privileged mode (err=%v)", err)
+		globalTokenFD = -1
+	} else {
 		globalTokenFD = fd
+		// Also set it in the ebpf library's internal storage so that
+		// library-level feature probes can use it
+		features.SetGlobalToken(fd)
+		log.Printf("BPF token initialized early: fd=%d", fd)
 	}
+	globalTokenInitialized = true
+}
+
+// GetGlobalToken returns the global BPF token FD.
+// Returns -1 if no token is available. The token is initialized once at startup.
+func GetGlobalToken() int {
 	return globalTokenFD
 }
 
