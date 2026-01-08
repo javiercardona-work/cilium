@@ -194,6 +194,16 @@ func detachCgroup(logger *slog.Logger, name, cgroupRoot, pinPath string) error {
 
 // detachAll detaches all programs attached to cgroupRoot with the corresponding attach type.
 func detachAll(logger *slog.Logger, attach ebpf.AttachType, cgroupRoot string) error {
+	// In restricted mode (user namespace with BPF token), skip QueryPrograms
+	// which will fail with EPERM. We can't manage these programs anyway.
+	if bpf.InRestrictedMode() {
+		logger.Debug("In restricted mode, skipping cgroup query",
+			logfields.Root, cgroupRoot,
+			logfields.Type, attach,
+		)
+		return nil
+	}
+
 	cg, err := os.Open(cgroupRoot)
 	if err != nil {
 		return fmt.Errorf("open cgroup %s: %w", cgroupRoot, err)
