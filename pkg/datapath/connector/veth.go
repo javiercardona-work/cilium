@@ -55,6 +55,10 @@ type LinkConfig struct {
 	GSOIPv4MaxSize int
 
 	DeviceMTU int
+
+	// IPv4Enabled indicates whether IPv4 is enabled. Used to skip IPv4-only
+	// sysctls like rp_filter when running in IPv6-only mode.
+	IPv4Enabled bool
 }
 
 // SetupVethWithNames sets up the net interface, the peer interface and fills up some endpoint
@@ -110,9 +114,12 @@ func SetupVethWithNames(defaultLogger *slog.Logger, lxcIfName, peerIfName string
 	// Disable reverse path filter on the host side veth peer to allow
 	// container addresses to be used as source address when the linux
 	// stack performs routing.
-	err = DisableRpFilter(sysctl, lxcIfName)
-	if err != nil {
-		return nil, nil, err
+	// Only needed for IPv4 - rp_filter is an IPv4-only sysctl.
+	if cfg.IPv4Enabled {
+		err = DisableRpFilter(sysctl, lxcIfName)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to disable rp_filter: %w", err)
+		}
 	}
 
 	peer, err := safenetlink.LinkByName(peerIfName)

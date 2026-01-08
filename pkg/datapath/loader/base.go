@@ -363,7 +363,7 @@ func (l *loader) ReinitializeHostDev(ctx context.Context, mtu int) error {
 func (l *loader) Reinitialize(ctx context.Context, lnc *datapath.LocalNodeConfiguration, tunnelConfig tunnel.Config, iptMgr datapath.IptablesManager, p datapath.Proxy) error {
 	sysSettings := []tables.Sysctl{
 		{Name: []string{"net", "core", "bpf_jit_enable"}, Val: "1", IgnoreErr: true, Warn: "Unable to ensure that BPF JIT compilation is enabled. This can be ignored when Cilium is running inside non-host network namespace (e.g. with kind or minikube)"},
-		{Name: []string{"net", "ipv4", "conf", "all", "rp_filter"}, Val: "0", IgnoreErr: false},
+		{Name: []string{"net", "ipv4", "conf", "all", "rp_filter"}, Val: "0", IgnoreErr: true, Warn: "Unable to disable rp_filter. This can be ignored when Cilium is running in a user namespace"},
 		{Name: []string{"net", "ipv4", "fib_multipath_use_neigh"}, Val: "1", IgnoreErr: true},
 		{Name: []string{"kernel", "unprivileged_bpf_disabled"}, Val: "1", IgnoreErr: true},
 		{Name: []string{"kernel", "timer_migration"}, Val: "0", IgnoreErr: true},
