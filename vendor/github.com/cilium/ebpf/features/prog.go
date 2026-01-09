@@ -33,9 +33,15 @@ func probeProgram(spec *ebpf.ProgramSpec) error {
 			asm.Return(),
 		}
 	}
-	prog, err := ebpf.NewProgramWithOptions(spec, ebpf.ProgramOptions{
+	opts := ebpf.ProgramOptions{
 		LogDisabled: true,
-	})
+	}
+	// Use global BPF token if available
+	tokenFD := GetGlobalToken()
+	if tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err == nil {
 		prog.Close()
 	}
@@ -47,6 +53,11 @@ func probeProgram(spec *ebpf.ProgramSpec) error {
 	// to support the given prog type.
 	case errors.Is(err, unix.EINVAL), errors.Is(err, unix.E2BIG):
 		err = ebpf.ErrNotSupported
+	// EPERM with a BPF token means the kernel knows about this but the token
+	// doesn't grant permission - treat as supported for feature detection.
+	// Without a token, EPERM is a real permission error and should propagate.
+	case tokenFD > 0 && errors.Is(err, unix.EPERM):
+		err = nil
 	}
 
 	return err
@@ -138,14 +149,18 @@ var haveProgramTypeMatrix = internal.FeatureMatrix[ebpf.ProgramType]{
 			}
 
 			// create target prog
+			targetOpts := ebpf.ProgramOptions{
+				LogDisabled: true,
+			}
+			if tokenFD := GetGlobalToken(); tokenFD > 0 {
+				targetOpts.TokenFD = tokenFD
+			}
 			prog, err := ebpf.NewProgramWithOptions(
 				&ebpf.ProgramSpec{
 					Type:         ebpf.XDP,
 					Instructions: insns,
 				},
-				ebpf.ProgramOptions{
-					LogDisabled: true,
-				},
+				targetOpts,
 			)
 			if err != nil {
 				return err
@@ -274,11 +289,23 @@ func haveProgramHelper(pt ebpf.ProgramType, helper asm.BuiltinFunc) error {
 		spec.AttachType = ebpf.AttachNetfilter
 	}
 
-	prog, err := ebpf.NewProgramWithOptions(spec, ebpf.ProgramOptions{
+	helperOpts := ebpf.ProgramOptions{
 		LogLevel: 1,
-	})
+	}
+	tokenFD := GetGlobalToken()
+	if tokenFD > 0 {
+		helperOpts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(spec, helperOpts)
 	if err == nil {
 		prog.Close()
+	}
+
+	// EPERM with a BPF token means the kernel knows about this but the token
+	// doesn't grant permission - treat as supported for feature detection.
+	// Without a token, EPERM is a real permission error and should propagate.
+	if tokenFD > 0 && errors.Is(err, unix.EPERM) {
+		return nil
 	}
 
 	var verr *ebpf.VerifierError

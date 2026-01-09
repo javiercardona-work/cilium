@@ -102,6 +102,10 @@ type ProgramOptions struct {
 	// (containers) or where it is in a non-standard location. Defaults to
 	// use the kernel module BTF from a well-known location if nil.
 	KernelModuleTypes map[string]*btf.Spec
+
+	// TokenFD is the file descriptor of a BPF token for unprivileged
+	// program loading in user namespaces. Set to -1 to disable.
+	TokenFD int
 }
 
 // ProgramSpec defines a Program.
@@ -287,6 +291,12 @@ func newProgramWithOptions(spec *ProgramSpec, opts ProgramOptions, c *btf.Cache)
 		ExpectedAttachType: sys.AttachType(spec.AttachType),
 		License:            sys.NewStringPointer(spec.License),
 		KernVersion:        kv,
+		ProgTokenFd:        int32(opts.TokenFD),
+	}
+
+	// If a BPF token is provided, set the flag to tell the kernel to use it
+	if opts.TokenFD > 0 {
+		attr.ProgFlags |= sys.BPF_F_TOKEN_FD
 	}
 
 	insns := make(asm.Instructions, len(spec.Instructions))

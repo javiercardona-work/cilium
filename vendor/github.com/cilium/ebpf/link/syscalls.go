@@ -9,6 +9,7 @@ import (
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/sys"
+	"github.com/cilium/ebpf/internal/token"
 	"github.com/cilium/ebpf/internal/unix"
 )
 
@@ -105,6 +106,11 @@ var haveProgQuery = internal.NewFeatureTest("BPF_PROG_QUERY", func() error {
 	if errors.Is(err, unix.EBADF) {
 		return nil
 	}
+	// In user namespaces, BPF_PROG_QUERY may return EPERM even though the
+	// feature is supported. Treat EPERM as "supported but restricted".
+	if errors.Is(err, unix.EPERM) {
+		return nil
+	}
 	if err != nil {
 		return ErrNotSupported
 	}
@@ -112,14 +118,18 @@ var haveProgQuery = internal.NewFeatureTest("BPF_PROG_QUERY", func() error {
 }, "4.15")
 
 var haveTCX = internal.NewFeatureTest("tcx", func() error {
-	prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
+	opts := ebpf.ProgramOptions{}
+	if tokenFD := token.GetGlobalToken(); tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(&ebpf.ProgramSpec{
 		Type:    ebpf.SchedCLS,
 		License: "MIT",
 		Instructions: asm.Instructions{
 			asm.Mov.Imm(asm.R0, 0),
 			asm.Return(),
 		},
-	})
+	}, opts)
 
 	if err != nil {
 		return internal.ErrNotSupported
@@ -147,14 +157,18 @@ var haveTCX = internal.NewFeatureTest("tcx", func() error {
 }, "6.6")
 
 var haveNetkit = internal.NewFeatureTest("netkit", func() error {
-	prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
+	opts := ebpf.ProgramOptions{}
+	if tokenFD := token.GetGlobalToken(); tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(&ebpf.ProgramSpec{
 		Type:    ebpf.SchedCLS,
 		License: "MIT",
 		Instructions: asm.Instructions{
 			asm.Mov.Imm(asm.R0, 0),
 			asm.Return(),
 		},
-	})
+	}, opts)
 
 	if err != nil {
 		return internal.ErrNotSupported
