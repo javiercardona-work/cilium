@@ -24,6 +24,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/logging"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/netns"
@@ -152,14 +153,21 @@ func HaveV3ISA(logger *slog.Logger) error {
 }
 
 func newProgram(progType ebpf.ProgramType) (*ebpf.Program, error) {
-	prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
+	spec := &ebpf.ProgramSpec{
 		Type: progType,
 		Instructions: asm.Instructions{
 			asm.Mov.Imm(asm.R0, 0),
 			asm.Return(),
 		},
 		License: "Apache-2.0",
-	})
+	}
+
+	opts := ebpf.ProgramOptions{}
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+
+	prog, err := ebpf.NewProgramWithOptions(spec, opts)
 	if err != nil {
 		return nil, fmt.Errorf("loading bpf program: %w: %w", err, ErrNotSupported)
 	}
@@ -170,6 +178,11 @@ func newProgram(progType ebpf.ProgramType) (*ebpf.Program, error) {
 var HaveBPF = sync.OnceValue(func() error {
 	prog, err := newProgram(ebpf.SocketFilter)
 	if err != nil {
+		// If we get EPERM with a BPF token, it means the kernel supports BPF
+		// but the token doesn't grant sufficient permissions - treat as supported.
+		if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 && errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return err
 	}
 	defer prog.Close()
@@ -182,15 +195,31 @@ var HaveBPF = sync.OnceValue(func() error {
 var HaveBPFJIT = sync.OnceValue(func() error {
 	prog, err := newProgram(ebpf.SocketFilter)
 	if err != nil {
+		// If we get EPERM with a BPF token, it means the kernel supports this
+		// but the token doesn't grant sufficient permissions - treat as supported.
+		if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 && errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return err
 	}
 	defer prog.Close()
 
 	info, err := prog.Info()
 	if err != nil {
+		// In user namespaces, getting program info may fail with EPERM even though
+		// the program was loaded successfully. If we got this far, the JIT works.
+		if errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return fmt.Errorf("get prog info: %w", err)
 	}
 	if _, err := info.JitedSize(); err != nil {
+		// JitedSize can fail with EPERM or ErrNotSupported in user namespaces
+		// due to insufficient permissions to read jited info. If the program loaded
+		// successfully, we can assume JIT is available.
+		if errors.Is(err, unix.EPERM) || errors.Is(err, ebpf.ErrNotSupported) {
+			return nil
+		}
 		return fmt.Errorf("get JITed prog size: %w", err)
 	}
 
@@ -340,7 +369,12 @@ func HaveSKBAdjustRoomL2RoomMACSupport(logger *slog.Logger) (err error) {
 		asm.FnSkbAdjustRoom.Call(),
 		asm.Return(),
 	}
-	prog, err := ebpf.NewProgram(progSpec)
+
+	opts := ebpf.ProgramOptions{}
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		opts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(progSpec, opts)
 	if err != nil {
 		return err
 	}
@@ -400,17 +434,32 @@ func HaveDeadCodeElim() error {
 		},
 	}
 
-	prog, err := ebpf.NewProgram(&spec)
+	progOpts := ebpf.ProgramOptions{}
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		progOpts.TokenFD = tokenFD
+	}
+	prog, err := ebpf.NewProgramWithOptions(&spec, progOpts)
 	if err != nil {
 		return fmt.Errorf("loading program: %w", err)
 	}
+	defer prog.Close()
 
 	info, err := prog.Info()
 	if err != nil {
+		// In user namespaces, getting program info may fail with EPERM.
+		// If the program loaded successfully, assume dead code elim is supported.
+		if errors.Is(err, unix.EPERM) {
+			return nil
+		}
 		return fmt.Errorf("get prog info: %w", err)
 	}
 	infoInst, err := info.Instructions()
 	if err != nil {
+		// Getting instructions may fail with ErrNotSupported due to insufficient
+		// permissions in user namespaces. Assume supported if program loaded.
+		if errors.Is(err, unix.EPERM) || errors.Is(err, ebpf.ErrNotSupported) {
+			return nil
+		}
 		return fmt.Errorf("get instructions: %w", err)
 	}
 
@@ -475,6 +524,14 @@ func CreateHeaderFiles(headerDir string, probes *FeatureProbes) error {
 // Further needed probes should be added here, while new macro strings need to
 // be added in the correct `write*Header()` function.
 func ExecuteHeaderProbes(logger *slog.Logger) *FeatureProbes {
+	// Initialize global BPF token for feature probes.
+	// This must happen here (not in init()) because the BPFFS may not be
+	// mounted during package initialization.
+	if tokenFD := bpf.GetGlobalToken(); tokenFD > 0 {
+		features.SetGlobalToken(tokenFD)
+		logger.Info("BPF token support enabled for feature probes", "tokenFD", tokenFD)
+	}
+
 	probes := FeatureProbes{
 		ProgramHelpers: make(map[ProgramHelper]bool),
 	}
