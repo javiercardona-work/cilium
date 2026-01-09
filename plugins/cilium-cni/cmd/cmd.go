@@ -644,6 +644,7 @@ func (cmd *Cmd) Add(args *skel.CmdArgs) (err error) {
 			GROIPv4MaxSize: int(conf.GROIPV4MaxSize),
 			GSOIPv4MaxSize: int(conf.GSOIPV4MaxSize),
 			DeviceMTU:      int(conf.DeviceMTU),
+			IPv4Enabled:    ipv4IsEnabled(ipam),
 		}
 		var hostLink, epLink netlink.Link
 		var tmpIfName string
