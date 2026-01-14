@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/hive/hivetest"
 	"github.com/stretchr/testify/require"
 
@@ -27,11 +27,11 @@ type testReader struct {
 	lost   uint64
 }
 
-func (r *testReader) Read() (perf.Record, error) {
+func (r *testReader) Read() (ringbuf.Record, error) {
 	if r.closed {
-		return perf.Record{}, io.EOF
+		return ringbuf.Record{}, io.EOF
 	}
-	return perf.Record{CPU: r.cpu, RawSample: r.data, LostSamples: r.lost}, nil
+	return ringbuf.Record{RawSample: r.data}, nil
 }
 
 func (r *testReader) Pause() error {
