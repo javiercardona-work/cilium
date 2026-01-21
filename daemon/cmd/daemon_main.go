@@ -86,11 +86,6 @@ const (
 	fatalSleep = 2 * time.Second
 )
 
-var (
-	bootstrapTimestamp = time.Now()
-	bootstrapStats     = bootstrapStatistics{}
-)
-
 func InitGlobalFlags(logger *slog.Logger, cmd *cobra.Command, vp *viper.Viper) {
 	flags := cmd.Flags()
 
@@ -889,9 +884,6 @@ func validateL7ProxyRedirection(cfg *option.DaemonConfig) error {
 }
 
 func initEnv(logger *slog.Logger, vp *viper.Viper) {
-	bootstrapStats.earlyInit.Start()
-	defer bootstrapStats.earlyInit.End(true)
-
 	var debugDatapath bool
 
 	option.LogRegisteredSlogOptions(vp, logger)
@@ -1308,7 +1300,7 @@ func daemonLegacyInitialization(params daemonParams) legacy.DaemonInitialization
 				return fmt.Errorf("daemon configuration failed: %w", err)
 			}
 
-			params.Logger.Info("Daemon initialization completed", logfields.BootstrapTime, time.Since(bootstrapTimestamp))
+			params.Logger.Info("Daemon initialization completed")
 
 			if err := params.MonitorAgent.SendEvent(monitorAPI.MessageTypeAgent, monitorAPI.StartMessage(time.Now())); err != nil {
 				params.Logger.Warn("Failed to send agent start monitor message", logfields.Error, err)
