@@ -1544,6 +1544,13 @@ int cil_from_container(struct __ctx_buff *ctx)
 		break;
 #endif /* ENABLE_ARP_RESPONDER */
 #endif /* ENABLE_IPV4 */
+#ifndef ENABLE_IPV4
+	/* Pass through IPv4/ARP to kernel when IPv4 is disabled */
+	case bpf_htons(ETH_P_IP):
+	case bpf_htons(ETH_P_ARP):
+		ret = CTX_ACT_OK;
+		break;
+#endif /* !ENABLE_IPV4 */
 	default:
 		ret = DROP_UNKNOWN_L3;
 	}
@@ -2275,6 +2282,13 @@ int cil_lxc_policy(struct __ctx_buff *ctx)
 		sec_label = SECLABEL_IPV4;
 		break;
 #endif /* ENABLE_IPV4 */
+#ifndef ENABLE_IPV4
+	/* Pass through IPv4/ARP to kernel when IPv4 is disabled */
+	case bpf_htons(ETH_P_IP):
+	case bpf_htons(ETH_P_ARP):
+		ret = CTX_ACT_OK;
+		break;
+#endif /* !ENABLE_IPV4 */
 	default:
 		ret = DROP_UNKNOWN_L3;
 		break;
@@ -2329,6 +2343,13 @@ int cil_lxc_policy_egress(struct __ctx_buff *ctx __maybe_unused)
 		sec_label = SECLABEL_IPV4;
 		break;
 #endif /* ENABLE_IPV4 */
+#ifndef ENABLE_IPV4
+	/* Pass through IPv4/ARP to kernel when IPv4 is disabled */
+	case bpf_htons(ETH_P_IP):
+	case bpf_htons(ETH_P_ARP):
+		ret = CTX_ACT_OK;
+		break;
+#endif /* !ENABLE_IPV4 */
 	default:
 		ret = DROP_UNKNOWN_L3;
 		break;
@@ -2425,6 +2446,16 @@ int cil_to_container(struct __ctx_buff *ctx)
 		ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_CT_INGRESS, &ext_err);
 		break;
 #endif /* ENABLE_IPV4 */
+#ifndef ENABLE_IPV4
+	/* Pass through IPv4 to kernel when IPv4 is disabled */
+	case bpf_htons(ETH_P_IP):
+#if !defined(ENABLE_ARP_PASSTHROUGH) && !defined(ENABLE_ARP_RESPONDER)
+	/* Pass through ARP when neither passthrough nor responder is enabled */
+	case bpf_htons(ETH_P_ARP):
+#endif
+		ret = CTX_ACT_OK;
+		break;
+#endif /* !ENABLE_IPV4 */
 	default:
 		ret = DROP_UNKNOWN_L3;
 		break;
