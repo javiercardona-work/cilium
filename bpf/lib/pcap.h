@@ -99,8 +99,7 @@ static __always_inline void cilium_capture(struct __ctx_buff *ctx,
 		},
 	};
 
-	ctx_event_output(ctx, &cilium_events, (cap_len << 32) | BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event(ctx, &msg, sizeof(msg), cap_len);
 }
 
 static __always_inline void __cilium_capture_in(struct __ctx_buff *ctx,

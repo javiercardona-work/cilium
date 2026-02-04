@@ -66,7 +66,15 @@ func newMonitorAgent(params agentParams) Agent {
 				return nil
 			}
 
-			err := agent.AttachToEventsMap(defaults.MonitorBufferPages)
+			// Check if the underlying map is available (it may not exist yet
+			// if BPF programs haven't been loaded)
+			ebpfMap := params.EventsMap.EbpfMap()
+			if ebpfMap == nil {
+				params.Log.Info("Events map not yet available, monitor will start when BPF programs are loaded")
+				return nil
+			}
+
+			err := agent.AttachToEventsMap(ebpfMap, defaults.MonitorBufferPages)
 			if err != nil {
 				params.Log.Error("encountered error when attaching the monitor agent to eventsmap", logfields.Error, err)
 				return fmt.Errorf("encountered error when attaching the monitor agent: %w", err)

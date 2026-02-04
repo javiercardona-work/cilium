@@ -189,7 +189,7 @@ struct debug_capture_msg {
 		})
 
 
-static __always_inline void cilium_dbg(struct __ctx_buff *ctx, __u8 type,
+static __always_inline void cilium_dbg(struct __ctx_buff *ctx __maybe_unused, __u8 type,
 				       __u32 arg1, __u32 arg2)
 {
 	struct debug_msg msg = {
@@ -198,11 +198,10 @@ static __always_inline void cilium_dbg(struct __ctx_buff *ctx, __u8 type,
 		.arg2	= arg2,
 	};
 
-	ctx_event_output(ctx, &cilium_events, BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event_simple(&msg, sizeof(msg));
 }
 
-static __always_inline void cilium_dbg3(struct __ctx_buff *ctx, __u8 type,
+static __always_inline void cilium_dbg3(struct __ctx_buff *ctx __maybe_unused, __u8 type,
 					__u32 arg1, __u32 arg2, __u32 arg3)
 {
 	struct debug_msg msg = {
@@ -212,8 +211,7 @@ static __always_inline void cilium_dbg3(struct __ctx_buff *ctx, __u8 type,
 		.arg3	= arg3,
 	};
 
-	ctx_event_output(ctx, &cilium_events, BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event_simple(&msg, sizeof(msg));
 }
 
 
@@ -229,9 +227,7 @@ static __always_inline void cilium_dbg_capture2(struct __ctx_buff *ctx, __u8 typ
 		.arg2	= arg2,
 	};
 
-	ctx_event_output(ctx, &cilium_events,
-			 (cap_len << 32) | BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event(ctx, &msg, sizeof(msg), cap_len);
 }
 
 static __always_inline void cilium_dbg_capture(struct __ctx_buff *ctx, __u8 type,

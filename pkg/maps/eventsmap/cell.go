@@ -4,16 +4,17 @@
 package eventsmap
 
 import (
-	"fmt"
+	"log/slog"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/hive/cell"
 
 	"github.com/cilium/cilium/pkg/bpf"
 )
 
 // Cell provides eventsmap.Map, which is the hive representation of the cilium
-// events perf event ring buffer.
+// events ring buffer.
 var Cell = cell.Module(
 	"events-map",
 	"eBPF ring buffer of cilium events",
@@ -21,30 +22,28 @@ var Cell = cell.Module(
 	cell.Provide(newEventsMap),
 )
 
-var (
-	MaxEntries int
-)
+// RingBufReader is an interface for reading from ring buffer records.
+// Implementations need to be safe to call from multiple goroutines.
+type RingBufReader interface {
+	Read() (ringbuf.Record, error)
+	Close() error
+}
 
-type Map any
+type Map interface {
+	NewReader() (RingBufReader, error)
+	MapName() string
+	EbpfMap() *ebpf.Map
+}
 
-func newEventsMap(lifecycle cell.Lifecycle) bpf.MapOut[Map] {
-	eventsMap := &eventsMap{}
+func newEventsMap(lifecycle cell.Lifecycle, logger *slog.Logger) bpf.MapOut[Map] {
+	eventsMap := initMap(logger)
 
 	lifecycle.Append(cell.Hook{
-		OnStart: func(context cell.HookContext) error {
-			cpus, err := ebpf.PossibleCPU()
-			if err != nil {
-				return fmt.Errorf("failed to get number of possible CPUs: %w", err)
-			}
-			err = eventsMap.init(cpus)
-			if err != nil {
-				return fmt.Errorf("initializing events map: %w", err)
-			}
-			return nil
+		OnStart: func(startCtx cell.HookContext) error {
+			return eventsMap.open()
 		},
-		OnStop: func(context cell.HookContext) error {
-			// We don't currently care for cleaning up.
-			return nil
+		OnStop: func(stopCtx cell.HookContext) error {
+			return eventsMap.close()
 		},
 	})
 

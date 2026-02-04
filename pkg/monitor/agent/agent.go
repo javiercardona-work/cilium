@@ -14,11 +14,10 @@ import (
 	"strings"
 
 	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/ringbuf"
 	"golang.org/x/sys/unix"
 
 	"github.com/cilium/cilium/api/v1/models"
-	oldBPF "github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/lock"
 	"github.com/cilium/cilium/pkg/logging"
 	"github.com/cilium/cilium/pkg/logging/logfields"
@@ -43,7 +42,7 @@ func isCtxDone(ctx context.Context) bool {
 }
 
 type Agent interface {
-	AttachToEventsMap(nPages int) error
+	AttachToEventsMap(eventsMap *ebpf.Map, nPages int) error
 	SendEvent(typ int, event any) error
 	RegisterNewListener(newListener listener.MonitorListener)
 	RemoveListener(ml listener.MonitorListener)
@@ -54,11 +53,11 @@ type Agent interface {
 
 // Agent structure for centralizing the responsibilities of the main events
 // reader.
-// There is some racey-ness around perfReaderCancel since it replaces on every
-// perf reader start. In the event that a MonitorListener from a previous
-// generation calls its cleanup after the start of the new perf reader, we
+// There is some racey-ness around readerCancel since it replaces on every
+// ring buffer reader start. In the event that a MonitorListener from a previous
+// generation calls its cleanup after the start of the new reader, we
 // might call the new, and incorrect, cancel function. We guard for this by
-// checking the number of listeners during the cleanup call. The perf reader
+// checking the number of listeners during the cleanup call. The ring buffer reader
 // must have at least one MonitorListener (since it started) so no cancel is called.
 // If it doesn't, the cancel is the correct behavior (the older generation
 // cancel must have been called for us to get this far anyway).
@@ -69,7 +68,7 @@ type agent struct {
 	models.MonitorStatus
 
 	ctx              context.Context
-	perfReaderCancel context.CancelFunc
+	readerCancel context.CancelFunc
 
 	// listeners are external cilium monitor clients which receive raw
 	// gob-encoded payloads
@@ -78,18 +77,18 @@ type agent struct {
 	consumers map[consumer.MonitorConsumer]struct{}
 
 	events        *ebpf.Map
-	monitorEvents *perf.Reader
+	monitorEvents eventsmap.RingBufReader
 }
 
 // newAgent starts a new monitor agent instance which distributes monitor events
 // to registered listeners. Once the datapath is set up, AttachToEventsMap needs
-// to be called to receive events from the perf ring buffer. Otherwise, only
+// to be called to receive events from the ring buffer. Otherwise, only
 // user space events received via SendEvent are distributed registered listeners.
 // Internally, the agent spawns a singleton goroutine reading events from
-// the BPF perf ring buffer and provides an interface to pass in non-BPF events.
-// The instance can be stopped by cancelling ctx, which will stop the perf reader
+// the BPF ring buffer and provides an interface to pass in non-BPF events.
+// The instance can be stopped by cancelling ctx, which will stop the reader
 // goroutine and close all registered listeners.
-// Note that the perf buffer reader is started only when listeners are
+// Note that the ring buffer reader is started only when listeners are
 // connected.
 func newAgent(ctx context.Context, logger *slog.Logger) *agent {
 	return &agent{
@@ -97,26 +96,19 @@ func newAgent(ctx context.Context, logger *slog.Logger) *agent {
 		logger:           logger,
 		listeners:        make(map[listener.MonitorListener]struct{}),
 		consumers:        make(map[consumer.MonitorConsumer]struct{}),
-		perfReaderCancel: func() {}, // no-op to avoid doing null checks everywhere
+		readerCancel: func() {}, // no-op to avoid doing null checks everywhere
 	}
 }
 
-// AttachToEventsMap opens the events perf ring buffer and makes it ready for
+// AttachToEventsMap attaches to the provided events ring buffer and makes it ready for
 // consumption, such that any subscribed consumers may receive events
 // from it. This function is to be called once the events map has been set up.
-func (a *agent) AttachToEventsMap(nPages int) error {
+func (a *agent) AttachToEventsMap(eventsMap *ebpf.Map, nPages int) error {
 	a.Lock()
 	defer a.Unlock()
 
 	if a.events != nil {
 		return errors.New("events map already attached")
-	}
-
-	// assert that we can actually connect the monitor
-	path := oldBPF.MapPath(a.logger, eventsmap.MapName)
-	eventsMap, err := ebpf.LoadPinnedMap(path, nil)
-	if err != nil {
-		return err
 	}
 
 	a.events = eventsMap
@@ -126,9 +118,9 @@ func (a *agent) AttachToEventsMap(nPages int) error {
 		Pagesize: int64(os.Getpagesize()),
 	}
 
-	// start the perf reader if we already have subscribers
+	// start the reader if we already have subscribers
 	if a.hasSubscribersLocked() {
-		a.startPerfReaderLocked()
+		a.startReaderLocked()
 	}
 
 	return nil
@@ -197,21 +189,21 @@ func (a *agent) hasListeners() bool {
 	return len(a.listeners) != 0
 }
 
-// startPerfReaderLocked starts the perf reader. This should only be
+// startReaderLocked starts the ring buffer reader. This should only be
 // called if there are no other readers already running.
 // The goroutine is spawned with a context derived from m.Context() and the
-// cancelFunc is assigned to perfReaderCancel. Note that cancelling m.Context()
+// cancelFunc is assigned to readerCancel. Note that cancelling m.Context()
 // (e.g. on program shutdown) will also cancel the derived context.
 // Note: it is critical to hold the lock for this operation.
-func (a *agent) startPerfReaderLocked() {
+func (a *agent) startReaderLocked() {
 	if a.events == nil {
 		return // not attached to events map yet
 	}
 
-	a.perfReaderCancel() // don't leak any old readers, just in case.
-	perfEventReaderCtx, cancel := context.WithCancel(a.ctx)
-	a.perfReaderCancel = cancel
-	go a.handleEvents(perfEventReaderCtx)
+	a.readerCancel() // don't leak any old readers, just in case.
+	readerCtx, cancel := context.WithCancel(a.ctx)
+	a.readerCancel = cancel
+	go a.handleEvents(readerCtx)
 }
 
 // RegisterNewListener adds the new MonitorListener to the global list.
@@ -230,9 +222,9 @@ func (a *agent) RegisterNewListener(newListener listener.MonitorListener) {
 		return
 	}
 
-	// If this is the first listener, start the perf reader
+	// If this is the first listener, start the reader
 	if !a.hasSubscribersLocked() {
-		a.startPerfReaderLocked()
+		a.startReaderLocked()
 	}
 
 	version := newListener.Version()
@@ -253,7 +245,7 @@ func (a *agent) RegisterNewListener(newListener listener.MonitorListener) {
 }
 
 // RemoveListener deletes the MonitorListener from the list, closes its queue,
-// and stops perfReader if this is the last subscriber
+// and stops the reader if this is the last subscriber
 func (a *agent) RemoveListener(ml listener.MonitorListener) {
 	if a == nil {
 		return
@@ -271,13 +263,13 @@ func (a *agent) RemoveListener(ml listener.MonitorListener) {
 	)
 	ml.Close()
 
-	// If this was the final listener, shutdown the perf reader and unmap our
+	// If this was the final listener, shutdown the reader and unmap our
 	// ring buffer readers. This tells the kernel to not emit this data.
 	// Note: it is critical to hold the lock and check the number of listeners.
 	// This guards against an older generation listener calling the
-	// current generation perfReaderCancel
+	// current generation readerCancel
 	if !a.hasSubscribersLocked() {
-		a.perfReaderCancel()
+		a.readerCancel()
 	}
 }
 
@@ -297,13 +289,13 @@ func (a *agent) RegisterNewConsumer(newConsumer consumer.MonitorConsumer) {
 	defer a.Unlock()
 
 	if !a.hasSubscribersLocked() {
-		a.startPerfReaderLocked()
+		a.startReaderLocked()
 	}
 	a.consumers[newConsumer] = struct{}{}
 }
 
 // RemoveConsumer deletes the MonitorConsumer from the list, closes its queue,
-// and stops perfReader if this is the last subscriber
+// and stops the reader if this is the last subscriber
 func (a *agent) RemoveConsumer(mc consumer.MonitorConsumer) {
 	if a == nil {
 		return
@@ -314,23 +306,22 @@ func (a *agent) RemoveConsumer(mc consumer.MonitorConsumer) {
 
 	delete(a.consumers, mc)
 	if !a.hasSubscribersLocked() {
-		a.perfReaderCancel()
+		a.readerCancel()
 	}
 }
 
-// handleEvents reads events from the perf buffer and processes them. It
+// handleEvents reads events from the ring buffer and processes them. It
 // will exit when stopCtx is done. Note, however, that it will block in the
-// Poll call but assumes enough events are generated that these blocks are
+// Read call but assumes enough events are generated that these blocks are
 // short.
 func (a *agent) handleEvents(stopCtx context.Context) {
 	tNow := time.Now()
-	a.logger.Info("Beginning to read perf buffer", logfields.StartTime, tNow)
-	defer a.logger.Info("Stopped reading perf buffer", logfields.StartTime, tNow)
+	a.logger.Info("Beginning to read ring buffer", logfields.StartTime, tNow)
+	defer a.logger.Info("Stopped reading ring buffer", logfields.StartTime, tNow)
 
-	bufferSize := int(a.Pagesize * a.Npages)
-	monitorEvents, err := perf.NewReader(a.events, bufferSize)
+	monitorEvents, err := ringbuf.NewReader(a.events)
 	if err != nil {
-		// In user namespaces or with BPF tokens, perf_event_open may not be available.
+		// In user namespaces or with BPF tokens, ring buffer creation may fail.
 		// Instead of crashing, log a warning and disable the monitor functionality.
 		// This allows Cilium to continue operating without event monitoring.
 		// Check for EPERM/EACCES both directly and in wrapped errors, and also
@@ -339,13 +330,13 @@ func (a *agent) handleEvents(stopCtx context.Context) {
 			errors.Is(err, os.ErrPermission) ||
 			strings.Contains(err.Error(), "permission denied")
 		if isPermissionDenied {
-			a.logger.Warn("Cannot initialise BPF perf ring buffer (permission denied, likely running in user namespace). Monitor/Hubble event collection disabled.",
+			a.logger.Warn("Cannot initialise BPF ring buffer (permission denied, likely running in user namespace). Monitor/Hubble event collection disabled.",
 				logfields.Error, err,
 				logfields.StartTime, tNow,
 			)
 			return
 		}
-		logging.Fatal(a.logger, "Cannot initialise BPF perf ring buffer sockets",
+		logging.Fatal(a.logger, "Cannot initialise BPF ring buffer",
 			logfields.Error, err,
 			logfields.StartTime, tNow,
 		)
@@ -366,50 +357,37 @@ func (a *agent) handleEvents(stopCtx context.Context) {
 		switch {
 		case isCtxDone(stopCtx):
 			return
+		case errors.Is(err, ringbuf.ErrClosed):
+			return
 		case err != nil:
-			if perf.IsUnknownEvent(err) {
-				a.Lock()
-				a.MonitorStatus.Unknown++
-				a.Unlock()
-			} else {
-				a.logger.Warn("Error received while reading from perf buffer",
-					logfields.Error, err,
-					logfields.StartTime, tNow,
-				)
-				if errors.Is(err, unix.EBADFD) {
-					return
-				}
+			a.logger.Warn("Error received while reading from ring buffer",
+				logfields.Error, err,
+				logfields.StartTime, tNow,
+			)
+			if errors.Is(err, unix.EBADFD) {
+				return
 			}
 			continue
 		}
 
-		a.processPerfRecord(record)
+		a.processRingbufRecord(record)
 	}
 }
 
-// processPerfRecord processes a record from the datapath and sends it to any
+// processRingbufRecord processes a record from the datapath and sends it to any
 // registered subscribers
-func (a *agent) processPerfRecord(record perf.Record) {
+func (a *agent) processRingbufRecord(record ringbuf.Record) {
 	a.Lock()
 	defer a.Unlock()
 
-	if record.LostSamples > 0 {
-		a.MonitorStatus.Lost += int64(record.LostSamples)
-		a.notifyPerfEventLostLocked(record.LostSamples, record.CPU)
-		a.sendToListenersLocked(&payload.Payload{
-			CPU:  record.CPU,
-			Lost: record.LostSamples,
-			Type: payload.RecordLost,
-		})
-
-	} else {
-		a.notifyPerfEventLocked(record.RawSample, record.CPU)
-		a.sendToListenersLocked(&payload.Payload{
-			Data: record.RawSample,
-			CPU:  record.CPU,
-			Type: payload.EventSample,
-		})
-	}
+	// Ring buffers don't have lost sample notifications like perf buffers.
+	// All records contain actual data.
+	a.notifyPerfEventLocked(record.RawSample, 0)
+	a.sendToListenersLocked(&payload.Payload{
+		Data: record.RawSample,
+		CPU:  0, // ringbuf doesn't provide CPU info
+		Type: payload.EventSample,
+	})
 }
 
 // State returns the current status of the monitor

@@ -101,9 +101,7 @@ int tail_drop_notify(struct __ctx_buff *ctx)
 		.flags          = flags,
 	};
 
-	ctx_event_output(ctx, &cilium_events,
-			 (cap_len << 32) | BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event(ctx, &msg, sizeof(msg), cap_len);
 
 	return exitcode;
 }
