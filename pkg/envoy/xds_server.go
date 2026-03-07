@@ -972,7 +972,16 @@ func (s *xdsServer) getListenerConf(name string, kind policy.L7ParserType, port 
 		tlsClusterName = ingressTLSClusterName
 	}
 
-	addr, additionalAddr := GetLocalListenerAddresses(port, option.Config.IPv4Enabled(), option.Config.IPv6Enabled())
+	var addr *envoy_config_core.Address
+	var additionalAddr []*envoy_config_listener.AdditionalAddress
+	if option.Config.EnableBPFTProxy {
+		// BPF TProxy uses bpf_sk_lookup_tcp with the packet's original
+		// destination IP. A socket bound to loopback (::1/127.0.0.1)
+		// won't match, so we must bind to wildcard (::/ 0.0.0.0).
+		addr = getPublicListenerAddress(port, option.Config.IPv4Enabled(), option.Config.IPv6Enabled())
+	} else {
+		addr, additionalAddr = GetLocalListenerAddresses(port, option.Config.IPv4Enabled(), option.Config.IPv6Enabled())
+	}
 	lingerConfig := -1
 	if kind == policy.ParserTypeHTTP {
 		lingerConfig = s.config.httpLingerConfig
