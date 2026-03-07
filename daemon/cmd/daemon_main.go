@@ -1192,8 +1192,8 @@ func initEnv(logger *slog.Logger, vp *viper.Viper) {
 		logging.Fatal(logger, "Invalid datapath mode", logfields.DatapathMode, option.Config.DatapathMode)
 	}
 
-	if option.Config.EnableL7Proxy && !option.Config.InstallIptRules {
-		logging.Fatal(logger, "L7 proxy requires iptables rules (--install-iptables-rules=\"true\")")
+	if option.Config.EnableL7Proxy && !option.Config.InstallIptRules && !option.Config.EnableBPFTProxy {
+		logging.Fatal(logger, "L7 proxy requires iptables rules (--install-iptables-rules=\"true\") or BPF TProxy (--enable-bpf-tproxy=\"true\")")
 	}
 
 	if !option.Config.DNSProxyInsecureSkipTransparentModeCheck {
