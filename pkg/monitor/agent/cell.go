@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/cilium/cilium/pkg/bpf"
-	datapathTypes "github.com/cilium/cilium/pkg/datapath/types"
+	"github.com/cilium/cilium/pkg/datapath/loader"
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/maps/eventsmap"
@@ -50,11 +50,11 @@ func (def AgentConfig) Flags(flags *pflag.FlagSet) {
 type agentParams struct {
 	cell.In
 
-	Lifecycle cell.Lifecycle
-	Log       *slog.Logger
-	Config    AgentConfig
-	EventsMap eventsmap.Map    `optional:"true"`
-	Loader    datapathTypes.Loader
+	Lifecycle    cell.Lifecycle
+	Log          *slog.Logger
+	Config       AgentConfig
+	EventsMap    eventsmap.Map      `optional:"true"`
+	HostDPSignal *loader.HostDPSignal
 }
 
 func newMonitorAgent(params agentParams) Agent {
@@ -96,7 +96,7 @@ func newMonitorAgent(params agentParams) Agent {
 // loaded.
 func attachAfterInit(ctx context.Context, params agentParams, agent *agent) {
 	select {
-	case <-params.Loader.HostDatapathInitialized():
+	case <-params.HostDPSignal.Initialized():
 	case <-ctx.Done():
 		return
 	}

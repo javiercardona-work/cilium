@@ -19,7 +19,7 @@ import (
 	"github.com/cilium/cilium/pkg/datapath/linux/bigtcp"
 	linuxrouting "github.com/cilium/cilium/pkg/datapath/linux/routing"
 	"github.com/cilium/cilium/pkg/datapath/linux/sysctl"
-	datapath "github.com/cilium/cilium/pkg/datapath/types"
+	"github.com/cilium/cilium/pkg/datapath/loader"
 	"github.com/cilium/cilium/pkg/endpoint"
 	endpointcreator "github.com/cilium/cilium/pkg/endpoint/creator"
 	"github.com/cilium/cilium/pkg/endpointmanager"
@@ -55,7 +55,7 @@ type ciliumHealthManager struct {
 	logger          *slog.Logger
 	healthSpec      *healthApi.Spec
 	sysctl          sysctl.Sysctl
-	loader          datapath.Loader
+	hostDPSignal    *loader.HostDPSignal
 	mtuConfig       mtu.MTU
 	bigTCPConfig    *bigtcp.Configuration
 	endpointCreator endpointcreator.EndpointCreator
@@ -75,7 +75,7 @@ type ciliumHealthParams struct {
 	Lifecycle       cell.Lifecycle
 	HealthSpec      *healthApi.Spec
 	Sysctl          sysctl.Sysctl
-	Loader          datapath.Loader
+	HostDPSignal    *loader.HostDPSignal
 	MtuConfig       mtu.MTU
 	BigTCPConfig    *bigtcp.Configuration
 	EndpointCreator endpointcreator.EndpointCreator
@@ -89,7 +89,7 @@ func newCiliumHealthManager(params ciliumHealthParams) CiliumHealthManager {
 		logger:          params.Logger,
 		healthSpec:      params.HealthSpec,
 		sysctl:          params.Sysctl,
-		loader:          params.Loader,
+		hostDPSignal:    params.HostDPSignal,
 		mtuConfig:       params.MtuConfig,
 		bigTCPConfig:    params.BigTCPConfig,
 		endpointCreator: params.EndpointCreator,
@@ -104,7 +104,7 @@ func newCiliumHealthManager(params ciliumHealthParams) CiliumHealthManager {
 func (h *ciliumHealthManager) Init(ctx context.Context, routingInfo *linuxrouting.RoutingInfo, addCleanerFunc func(newFunc func())) error {
 	// Launch cilium-health in the same process (and namespace) as cilium.
 	h.logger.Info("Launching Cilium health daemon")
-	ch, err := h.launchCiliumNodeHealth(h.healthSpec, h.loader.HostDatapathInitialized())
+	ch, err := h.launchCiliumNodeHealth(h.healthSpec, h.hostDPSignal.Initialized())
 	if err != nil {
 		return fmt.Errorf("failed to start cilium health: %w", err)
 	}

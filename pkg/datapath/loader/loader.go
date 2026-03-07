@@ -76,7 +76,7 @@ type loader struct {
 	ipsecMu lock.Mutex // guards reinitializeIPSec
 
 	hostDpInitializedOnce sync.Once
-	hostDpInitialized     chan struct{}
+	hostDpSignal          *HostDPSignal
 
 	sysctl             sysctl.Sysctl
 	prefilter          datapath.PreFilter
@@ -99,6 +99,7 @@ type Params struct {
 	ConfigWriter       datapath.ConfigWriter
 	NodeConfigNotifier *manager.NodeConfigNotifier
 	Config             *option.DaemonConfig
+	HostDPSignal       *HostDPSignal
 
 	// Force map initialisation before loader. You should not use these otherwise.
 	// Some of the entries in this slice may be nil.
@@ -120,7 +121,7 @@ func newLoader(p Params) *loader {
 		logger:             p.Logger,
 		templateCache:      newObjectCache(p.Logger, p.ConfigWriter, filepath.Join(option.Config.StateDir, defaults.TemplatesDir)),
 		sysctl:             p.Sysctl,
-		hostDpInitialized:  make(chan struct{}),
+		hostDpSignal:       p.HostDPSignal,
 		prefilter:          p.Prefilter,
 		compilationLock:    p.CompilationLock,
 		configWriter:       p.ConfigWriter,
@@ -863,7 +864,7 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep datapath.Endpoint, lnc *
 
 		l.hostDpInitializedOnce.Do(func() {
 			l.logger.Debug("Initialized host datapath")
-			close(l.hostDpInitialized)
+			l.hostDpSignal.Close()
 		})
 
 		return hash, err
@@ -951,7 +952,7 @@ func (l *loader) CustomCallsMapPath(id uint16) string {
 // HostDatapathInitialized returns a channel which is closed when the
 // host datapath has been loaded for the first time.
 func (l *loader) HostDatapathInitialized() <-chan struct{} {
-	return l.hostDpInitialized
+	return l.hostDpSignal.Initialized()
 }
 
 func (l *loader) WriteEndpointConfig(w io.Writer, e datapath.EndpointConfiguration, lnCfg *datapath.LocalNodeConfiguration) error {
