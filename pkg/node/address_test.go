@@ -5,11 +5,15 @@ package node
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/cilium/cilium/pkg/cidr"
+	"github.com/cilium/cilium/pkg/node/types"
+	"github.com/cilium/cilium/pkg/option"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,4 +94,62 @@ func Test_getCiliumHostIPsFromFile(t *testing.T) {
 			require.Equal(t, tt.wantIpv6Router, gotIpv6Router)
 		})
 	}
+}
+
+func TestSetDefaultPrefixWithoutGlobalIPv4DoesNotSetNodeInternalIPv4(t *testing.T) {
+	oldEnableIPv4 := option.Config.EnableIPv4
+	oldEnableIPv6 := option.Config.EnableIPv6
+	oldIPv6ClusterAllocCIDRBase := option.Config.IPv6ClusterAllocCIDRBase
+	oldFirstGlobalV4AddrFn := firstGlobalV4AddrFn
+	option.Config.EnableIPv4 = true
+	option.Config.EnableIPv6 = false
+	option.Config.IPv6ClusterAllocCIDRBase = "fd00::"
+	firstGlobalV4AddrFn = func(string, net.IP, bool) (net.IP, error) {
+		return nil, fmt.Errorf("no global ipv4")
+	}
+	defer func() {
+		option.Config.EnableIPv4 = oldEnableIPv4
+		option.Config.EnableIPv6 = oldEnableIPv6
+		option.Config.IPv6ClusterAllocCIDRBase = oldIPv6ClusterAllocCIDRBase
+		firstGlobalV4AddrFn = oldFirstGlobalV4AddrFn
+	}()
+
+	node := &LocalNode{
+		Node: types.Node{
+			IPv4AllocCIDR: cidr.MustParseCIDR("10.244.7.0/24"),
+		},
+	}
+
+	setDefaultPrefix(slog.Default(), option.Config, "", node)
+
+	require.Nil(t, node.GetNodeInternalIPv4())
+	require.Equal(t, "10.244.7.0/24", node.IPv4AllocCIDR.String())
+}
+
+func TestSetDefaultPrefixPanicsWhenIPv4AllocCIDRAutogenNeedsMissingGlobalIPv4(t *testing.T) {
+	oldEnableIPv4 := option.Config.EnableIPv4
+	oldEnableIPv6 := option.Config.EnableIPv6
+	oldIPv6ClusterAllocCIDRBase := option.Config.IPv6ClusterAllocCIDRBase
+	oldFirstGlobalV4AddrFn := firstGlobalV4AddrFn
+	option.Config.EnableIPv4 = true
+	option.Config.EnableIPv6 = false
+	option.Config.IPv6ClusterAllocCIDRBase = "fd00::"
+	firstGlobalV4AddrFn = func(string, net.IP, bool) (net.IP, error) {
+		return nil, fmt.Errorf("no global ipv4")
+	}
+	defer func() {
+		option.Config.EnableIPv4 = oldEnableIPv4
+		option.Config.EnableIPv6 = oldEnableIPv6
+		option.Config.IPv6ClusterAllocCIDRBase = oldIPv6ClusterAllocCIDRBase
+		firstGlobalV4AddrFn = oldFirstGlobalV4AddrFn
+	}()
+
+	node := &LocalNode{}
+
+	require.PanicsWithValue(t,
+		"can't auto generate ipv4 alloc cidr if no global 4 addr",
+		func() {
+			setDefaultPrefix(slog.Default(), option.Config, "", node)
+		},
+	)
 }

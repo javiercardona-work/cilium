@@ -135,6 +135,10 @@ const (
 	// EnableIPIPTermination is the name of the option to enable IPIP termination
 	EnableIPIPTermination = "enable-ipip-termination"
 
+	// EnableBPFIPv4OverIPv6 is the name of the option to enable pure BPF
+	// IPv4-over-IPv6 pod forwarding on IPv6-only underlays.
+	EnableBPFIPv4OverIPv6 = "enable-bpf-ipv4-over-ipv6"
+
 	// Add unreachable routes on pod deletion
 	EnableUnreachableRoutes = "enable-unreachable-routes"
 
@@ -1403,6 +1407,10 @@ type DaemonConfig struct {
 
 	// EnableIPv6 is true when IPv6 is enabled
 	EnableIPv6 bool
+
+	// EnableBPFIPv4OverIPv6 is true when pure BPF IPv4-over-IPv6 pod forwarding
+	// is enabled for remote pod IPv4 traffic on IPv6-only underlays.
+	EnableBPFIPv4OverIPv6 bool
 
 	// EnableNat46X64Gateway is true when L3 based NAT46 and NAT64 translation is enabled
 	EnableNat46X64Gateway bool
@@ -2720,6 +2728,7 @@ func (c *DaemonConfig) Populate(logger *slog.Logger, vp *viper.Viper) {
 	c.ContainerIPLocalReservedPorts = vp.GetString(ContainerIPLocalReservedPorts)
 	c.EnableCustomCalls = vp.GetBool(EnableCustomCallsName)
 	c.BGPSecretsNamespace = vp.GetString(BGPSecretsNamespace)
+	c.EnableBPFIPv4OverIPv6 = vp.GetBool(EnableBPFIPv4OverIPv6)
 	c.EnableNat46X64Gateway = vp.GetBool(EnableNat46X64Gateway)
 	c.EnableIPv4Masquerade = vp.GetBool(EnableIPv4Masquerade) && c.EnableIPv4
 	c.EnableIPv6Masquerade = vp.GetBool(EnableIPv6Masquerade) && c.EnableIPv6
@@ -2781,6 +2790,14 @@ func (c *DaemonConfig) Populate(logger *slog.Logger, vp *viper.Viper) {
 	if c.EnableNat46X64Gateway || c.NodePortNat46X64 {
 		if !c.EnableIPv4 || !c.EnableIPv6 {
 			logging.Fatal(logger, fmt.Sprintf("%s requires both --%s and --%s enabled", EnableNat46X64Gateway, EnableIPv4Name, EnableIPv6Name))
+		}
+	}
+	if c.EnableBPFIPv4OverIPv6 {
+		if !c.EnableIPv4 || !c.EnableIPv6 {
+			logging.Fatal(logger, fmt.Sprintf("%s requires both --%s and --%s enabled", EnableBPFIPv4OverIPv6, EnableIPv4Name, EnableIPv6Name))
+		}
+		if c.RoutingMode != RoutingModeNative {
+			logging.Fatal(logger, fmt.Sprintf("%s requires --%s=%s", EnableBPFIPv4OverIPv6, RoutingMode, RoutingModeNative))
 		}
 	}
 

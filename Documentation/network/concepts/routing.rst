@@ -161,6 +161,34 @@ native routing mode:
   ``auto-direct-node-routes`` to give each node L2 connectivity in each zone 
   without traffic always needing to be routed by the BGP routers.
 
+IPv4 Pods on IPv6-only Underlays
+--------------------------------
+
+This tree also supports carrying remote pod IPv4 traffic across an IPv6-only
+underlay in native-routing mode without creating kernel VXLAN, Geneve, IPIP, or
+IP6IP6 tunnel devices. This path is compiled when
+``enable-bpf-ipv4-over-ipv6`` is enabled together with both IPv4 and IPv6 in
+native-routing mode, which enables the BPF define
+``ENABLE_BPF_IPV4_OVER_IPV6``.
+
+On egress, the sender prepends an outer IPv6 header addressed to the remote
+node's IPv6 ``InternalIP`` and sets ``nexthdr = IPPROTO_IPIP``. The original
+inner IPv4 packet is left untouched as the payload. On ingress, the receiver
+strips only that outer IPv6 header in BPF and then either delivers the inner
+IPv4 packet directly to a local endpoint or recirculates it into the IPv4
+netdev path with NodePort skipped.
+
+The sender resolves the remote node IPv6 through the
+``cilium_ipv4_over_ipv6_nodes`` BPF map. This is a longest-prefix-match map
+keyed by destination IPv4. On startup the agent clears any stale pinned
+contents, then node-subscription replay repopulates the map from remote
+``CiliumNode`` IPv4 pod CIDRs plus any per-node IPv4 health or ingress
+addresses.
+
+This is a pure BPF ``ipip6`` path. It is separate from
+``enable-ipip-termination``, which uses kernel-managed IPIP/IP6IP6 devices for
+plain tunnel termination.
+
 .. _aws_eni_datapath:
 
 AWS ENI

@@ -31,6 +31,7 @@ const preferPublicIP bool = true
 
 var (
 	addrs addresses
+	firstGlobalV4AddrFn = firstGlobalV4Addr
 
 	// localNode holds the current state of the local "types.Node".
 	// This is defined here until all uses of the getters and
@@ -85,12 +86,12 @@ func setDefaultPrefix(logger *slog.Logger, cfg *option.DaemonConfig, device stri
 	if cfg.EnableIPv4 {
 		isIPv6 := false
 
-		ip, err := firstGlobalV4Addr(device, node.GetCiliumInternalIP(isIPv6), preferPublicIP)
+		ip, err := firstGlobalV4AddrFn(device, node.GetCiliumInternalIP(isIPv6), preferPublicIP)
 		if err != nil {
-			return
+			ip = nil
 		}
 
-		if node.GetNodeIP(isIPv6) == nil {
+		if ip != nil && node.GetNodeIP(isIPv6) == nil {
 			node.SetNodeInternalIP(ip)
 		}
 
@@ -108,6 +109,8 @@ func setDefaultPrefix(logger *slog.Logger, cfg *option.DaemonConfig, device stri
 					ipv6range.IP[9],
 					ipv6range.IP[10],
 					ipv6range.IP[11])
+			} else if ip == nil {
+				logging.Panic(logger, "can't auto generate ipv4 alloc cidr if no global 4 addr")
 			}
 			v4range := fmt.Sprintf(defaults.DefaultIPv4Prefix+"/%d",
 				ip.To4()[3], defaults.DefaultIPv4PrefixLen)

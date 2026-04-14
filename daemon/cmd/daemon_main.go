@@ -258,6 +258,9 @@ func InitGlobalFlags(logger *slog.Logger, cmd *cobra.Command, vp *viper.Viper) {
 	flags.Bool(option.EnableNat46X64Gateway, false, "Enable NAT46 and NAT64 gateway")
 	option.BindEnv(vp, option.EnableNat46X64Gateway)
 
+	flags.Bool(option.EnableBPFIPv4OverIPv6, false, "Enable pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays")
+	option.BindEnv(vp, option.EnableBPFIPv4OverIPv6)
+
 	flags.Bool(option.EnableIPIPTermination, false, "Enable plain IPIP/IP6IP6 termination")
 	option.BindEnv(vp, option.EnableIPIPTermination)
 

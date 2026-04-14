@@ -163,6 +163,7 @@ cilium-agent [flags]
       --enable-masquerade-to-route-source                         Masquerade packets to the source IP provided from the routing layer rather than interface address
       --enable-monitor                                            Enable the monitor unix domain socket server (default true)
       --enable-nat46x64-gateway                                   Enable NAT46 and NAT64 gateway
+      --enable-bpf-ipv4-over-ipv6                                 Enable pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays
       --enable-node-selector-labels                               Enable use of node label based identity
       --enable-pmtu-discovery                                     Enable path MTU discovery to send ICMP fragmentation-needed replies to the client
       --enable-policy string                                      Enable policy enforcement (default "default")
@@ -410,4 +411,3 @@ cilium-agent [flags]
 * [cilium-agent completion](cilium-agent_completion.md)	 - Generate the autocompletion script for the specified shell
 * [cilium-agent hive](cilium-agent_hive.md)	 - Inspect the hive
 * [cilium-agent shell](cilium-agent_shell.md)	 - Connect to the Cilium shell
-

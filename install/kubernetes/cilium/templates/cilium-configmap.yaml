@@ -749,6 +749,10 @@ data:
   enable-ipv4-fragment-tracking: "false"
 {{- end }}
 
+{{- if .Values.bpfIPv4OverIPv6.enabled }}
+  enable-bpf-ipv4-over-ipv6: {{ .Values.bpfIPv4OverIPv6.enabled | quote }}
+{{- end }}
+
 {{- if .Values.nat46x64Gateway.enabled }}
   enable-nat46x64-gateway: {{ .Values.nat46x64Gateway.enabled | quote }}
 {{- end }}

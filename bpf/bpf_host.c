@@ -3,6 +3,7 @@
 
 #include <bpf/ctx/skb.h>
 #include <bpf/api.h>
+#include <linux/in.h>
 
 #include <bpf/config/node.h>
 #include <bpf/config/global.h>
@@ -66,6 +67,80 @@
 static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __maybe_unused vlan_id) {
 	VLAN_FILTER(ifindex, vlan_id);
 }
+
+#ifdef ENABLE_BPF_IPV4_OVER_IPV6
+/* Strip the outer IPv6 header from the pure BPF ipip6 pod-forwarding path and
+ * expose the original inner IPv4 packet to the regular IPv4 ingress logic.
+ */
+static __always_inline int
+decap_ipv4_over_ipv6(struct __ctx_buff *ctx, __s8 *ext_err)
+{
+	const __u32 outer_len = sizeof(struct ipv6hdr);
+	const __u32 full_len = (__u32)ctx_full_len(ctx);
+	const __u32 min_len = ETH_HLEN + outer_len + sizeof(struct iphdr);
+	__u8 version_ihl;
+	__be16 inner_len_be;
+	__u32 inner_len;
+
+	if (full_len < min_len) {
+		*ext_err = 1;
+		cilium_dbg3(ctx, DBG_DECAP, 1, full_len, min_len);
+		return DROP_INVALID;
+	}
+
+	if (ctx_load_bytes(ctx, ETH_HLEN + outer_len, &version_ihl, sizeof(version_ihl)) < 0) {
+		*ext_err = 2;
+		cilium_dbg3(ctx, DBG_DECAP, 2, ETH_HLEN + outer_len, 0);
+		return DROP_INVALID;
+	}
+
+	if ((version_ihl >> 4) != 4 || (version_ihl & 0x0f) < 5) {
+		*ext_err = 3;
+		cilium_dbg3(ctx, DBG_DECAP, 3, version_ihl >> 4, version_ihl & 0x0f);
+		return DROP_INVALID;
+	}
+
+	if (ctx_load_bytes(ctx, ETH_HLEN + outer_len + offsetof(struct iphdr, tot_len),
+			   &inner_len_be, sizeof(inner_len_be)) < 0) {
+		*ext_err = 4;
+		cilium_dbg3(ctx, DBG_DECAP, 4, ETH_HLEN + outer_len + offsetof(struct iphdr, tot_len), 0);
+		return DROP_INVALID;
+	}
+
+	inner_len = bpf_ntohs(inner_len_be);
+	if (inner_len < sizeof(struct iphdr)) {
+		*ext_err = 5;
+		cilium_dbg3(ctx, DBG_DECAP, 5, inner_len, sizeof(struct iphdr));
+		return DROP_INVALID;
+	}
+
+	if (ETH_HLEN + outer_len + inner_len > full_len) {
+		*ext_err = 6;
+		cilium_dbg3(ctx, DBG_DECAP, 6, inner_len, full_len);
+		return DROP_INVALID;
+	}
+
+	if (ctx_adjust_hroom(ctx, -(__s32)outer_len, BPF_ADJ_ROOM_MAC,
+			     BPF_F_ADJ_ROOM_DECAP_L3_IPV4) < 0) {
+		*ext_err = 7;
+		cilium_dbg3(ctx, DBG_DECAP, 7, outer_len, 0);
+		return DROP_INVALID;
+	}
+
+	{
+		__be16 eth_proto = bpf_htons(ETH_P_IP);
+
+		if (ctx_store_bytes(ctx, offsetof(struct ethhdr, h_proto),
+				    &eth_proto, sizeof(eth_proto), 0) < 0) {
+			*ext_err = 8;
+			return DROP_WRITE_ERROR;
+		}
+	}
+
+	*ext_err = 0;
+	return CTX_ACT_OK;
+}
+#endif /* ENABLE_BPF_IPV4_OVER_IPV6 */
 
 #if defined(ENABLE_IPV4) || defined(ENABLE_IPV6)
 static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
@@ -489,6 +564,11 @@ handle_to_netdev_ipv6(struct __ctx_buff *ctx, __u32 src_sec_identity,
 	if (!revalidate_data_pull(ctx, &data, &data_end, &ip6))
 		return DROP_INVALID;
 
+
+#ifdef ENABLE_BPF_IPV4_OVER_IPV6
+	if (ip6->nexthdr == IPPROTO_IPIP)
+		return CTX_ACT_OK;
+#endif
 	nexthdr = ip6->nexthdr;
 	hdrlen = ipv6_hdrlen(ctx, &nexthdr);
 	if (hdrlen < 0)
@@ -675,6 +755,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 	int ret __maybe_unused;
 	__u32 magic = MARK_MAGIC_IDENTITY;
 	bool from_proxy = false;
+	bool from_tunnel = false;
 
 	if (from_host && tc_index_from_ingress_proxy(ctx)) {
 		from_proxy = true;
@@ -687,6 +768,10 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
+
+#ifdef HAVE_ENCAP
+	from_tunnel = ctx_load_meta(ctx, CB_FROM_TUNNEL);
+#endif
 
 #ifdef ENABLE_HOST_FIREWALL
 	from_host_raw = ctx_load_and_clear_meta(ctx, CB_FROM_HOST);
@@ -732,7 +817,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 	 * we bypass request and reply path in the host namespace and
 	 * do not run into this issue.
 	 */
-	if (!from_host)
+	if (!from_host && !from_tunnel)
 		return CTX_ACT_OK;
 #endif /* !ENABLE_HOST_ROUTING */
 
@@ -746,6 +831,11 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 		 */
 		if (ep->flags & ENDPOINT_MASK_HOST_DELIVERY)
 			return CTX_ACT_OK;
+
+#ifndef ENABLE_HOST_ROUTING
+		if (!from_host && from_tunnel)
+			ctx_change_type(ctx, PACKET_HOST);
+#endif
 
 #ifdef ENABLE_HOST_ROUTING
 		/* add L2 header for L2-less interface, such as cilium_wg0 */
@@ -767,7 +857,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 #endif
 
 		return ipv4_local_delivery(ctx, l3_off, secctx, magic, ip4, ep,
-					   METRIC_INGRESS, from_host, false, 0);
+					   METRIC_INGRESS, from_host, from_tunnel, 0);
 	}
 
 	/* Below remainder is only relevant when traffic is pushed via cilium_host.
@@ -1091,6 +1181,57 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
 			return send_drop_notify_error(ctx, identity, DROP_INVALID,
 						      METRIC_INGRESS);
 
+
+#ifdef ENABLE_BPF_IPV4_OVER_IPV6
+		if (!from_host && ip6->nexthdr == IPPROTO_IPIP) {
+			struct endpoint_info *ep;
+
+			ret = decap_ipv4_over_ipv6(ctx, &ext_err);
+			if (ret != CTX_ACT_OK)
+				return send_drop_notify_error_ext(ctx, identity, ret, ext_err,
+							      METRIC_INGRESS);
+
+			if (!revalidate_data_pull(ctx, &data, &data_end, &ip4)) {
+				ext_err = 10;
+				return send_drop_notify_error_ext(ctx, identity, DROP_INVALID,
+							      ext_err, METRIC_INGRESS);
+			}
+
+			identity = resolve_srcid_ipv4(ctx, ip4, identity, &ipcache_srcid,
+					      false);
+			ctx_store_meta(ctx, CB_SRC_LABEL, identity);
+
+			send_trace_notify(ctx, obs_point, ipcache_srcid, UNKNOWN_ID,
+					  TRACE_EP_ID_UNKNOWN, ctx->ingress_ifindex,
+					  trace.reason, trace.monitor,
+					  bpf_htons(ETH_P_IP));
+
+			ep = lookup_ip4_endpoint(ip4);
+			if (ep && !(ep->flags & ENDPOINT_MASK_HOST_DELIVERY)) {
+				ret = ipv4_local_delivery(ctx, ETH_HLEN, identity,
+							 MARK_MAGIC_IDENTITY, ip4, ep,
+							 METRIC_INGRESS, false, true, 0);
+				if (IS_ERR(ret))
+					return send_drop_notify_error_ext(ctx, identity, ret, 0,
+									  METRIC_INGRESS);
+				return ret;
+			}
+
+			/* This is an already-decapsulated pod packet, not a fresh
+			 * external IPv4 ingress packet. Skip the NodePort/NAT46
+			 * front door on recirculation so the regular IPv4 local
+			 * delivery logic can consume it.
+			 */
+			ctx_skip_nodeport_set(ctx);
+			ctx_store_meta(ctx, CB_FROM_TUNNEL, 1);
+			ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_FROM_NETDEV,
+						 &ext_err);
+			return send_drop_notify_error_with_exitcode_ext(ctx, identity, ret,
+								ext_err, CTX_ACT_OK,
+								METRIC_INGRESS);
+		}
+#endif
+
 		identity = resolve_srcid_ipv6(ctx, ip6, identity, &ipcache_srcid, from_host);
 		ctx_store_meta(ctx, CB_SRC_LABEL, identity);
 
@@ -1211,6 +1352,7 @@ int cil_from_netdev(struct __ctx_buff *ctx)
 	}
 
 	ctx_skip_nodeport_clear(ctx);
+	ctx_store_meta(ctx, CB_FROM_TUNNEL, 0);
 
 #ifdef ENABLE_NODEPORT_ACCELERATION
 	if (flags & XFER_PKT_NO_SVC)

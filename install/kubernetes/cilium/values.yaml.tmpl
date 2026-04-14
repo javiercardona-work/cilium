@@ -453,6 +453,12 @@ bandwidthManager:
   bbr: false
   # -- Activate BBR TCP congestion control for Pods in the host namespace only.
   bbrHostNamespaceOnly: false
+# -- Configure pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays.
+bpfIPv4OverIPv6:
+  # -- Enable pure BPF IPv4-over-IPv6 (ipip6) pod forwarding for remote pod
+  # IPv4 traffic on IPv6-only underlays. Requires IPv4, IPv6, and native
+  # routing mode.
+  enabled: false
 # -- Configure standalone NAT46/NAT64 gateway
 nat46x64Gateway:
   # -- Enable RFC6052-prefixed translation
@@ -4041,4 +4047,3 @@ authentication:
 enableInternalTrafficPolicy: true
 # -- Enable LoadBalancer IP Address Management
 enableLBIPAM: true
-

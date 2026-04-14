@@ -2788,6 +2788,14 @@
      - Interval between how often SNAT map is counted for stats.
      - string
      - ``"30s"``
+   * - :spelling:ignore:`bpfIPv4OverIPv6`
+     - Configure pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays.
+     - object
+     - ``{"enabled":false}``
+   * - :spelling:ignore:`bpfIPv4OverIPv6.enabled`
+     - Enable pure BPF IPv4-over-IPv6 (ipip6) pod forwarding for remote pod IPv4 traffic on IPv6-only underlays. Requires IPv4, IPv6, and native routing mode.
+     - bool
+     - ``false``
    * - :spelling:ignore:`nat46x64Gateway`
      - Configure standalone NAT46/NAT64 gateway
      - object

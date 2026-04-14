@@ -19,6 +19,7 @@ import (
 	datapath "github.com/cilium/cilium/pkg/datapath/types"
 	"github.com/cilium/cilium/pkg/kpr"
 	"github.com/cilium/cilium/pkg/mtu"
+	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/testutils"
 	"github.com/cilium/cilium/pkg/testutils/netns"
 )
@@ -82,6 +83,25 @@ func TestCreateNodeRouteSpecMtu(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 0, generatedRoute.MTU)
+}
+
+func TestEnableIPv4DirectRoutes(t *testing.T) {
+	old := option.Config.EnableBPFIPv4OverIPv6
+	t.Cleanup(func() {
+		option.Config.EnableBPFIPv4OverIPv6 = old
+	})
+
+	nodeHandler := linuxNodeHandler{
+		nodeConfig: datapath.LocalNodeConfiguration{
+			EnableIPv4: true,
+		},
+	}
+
+	option.Config.EnableBPFIPv4OverIPv6 = false
+	require.True(t, nodeHandler.enableIPv4DirectRoutes())
+
+	option.Config.EnableBPFIPv4OverIPv6 = true
+	require.False(t, nodeHandler.enableIPv4DirectRoutes())
 }
 
 func TestPrivilegedLocalRule(t *testing.T) {
