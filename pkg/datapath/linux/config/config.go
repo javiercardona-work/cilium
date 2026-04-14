@@ -290,6 +290,9 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *config.Config) erro
 		if option.Config.EnableNat46X64Gateway {
 			cDefinesMap["ENABLE_NAT_46X64_GATEWAY"] = "1"
 		}
+		if option.Config.EnableBPFIPv4OverIPv6 {
+			cDefinesMap["ENABLE_BPF_IPV4_OVER_IPV6"] = "1"
+		}
 		if option.Config.NodePortNat46X64 {
 			cDefinesMap["ENABLE_NAT_46X64"] = "1"
 		}
@@ -368,6 +371,16 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *config.Config) erro
 	if drd != nil {
 		if option.Config.EnableIPv4 {
 			ipv4 := preferredIPv4Address(drd.Addrs)
+			if ipv4 == 0 {
+				// On IPv6-only hosts, the direct routing device (eth0) has no IPv4.
+				// Fall back to the derived node IPv4 (from pod CIDR) for BPF defines.
+				if cfg.NodeIPv4 != nil {
+					ipv4 = byteorder.NetIPv4ToHost32(cfg.NodeIPv4)
+				}
+				if ipv4 == 0 {
+					return fmt.Errorf("IPv4 direct routing device IP not found")
+				}
+			}
 			cDefinesMap["IPV4_DIRECT_ROUTING"] = fmt.Sprintf("%d", ipv4)
 		}
 		if option.Config.EnableIPv6 {

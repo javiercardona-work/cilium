@@ -858,6 +858,8 @@ contributors across the globe, there is almost always someone available to help.
 | namespaceOverride | string | `""` | namespaceOverride allows to override the destination namespace for Cilium resources. |
 | nat.mapStatsEntries | int | `32` | Number of the top-k SNAT map connections to track in Cilium statedb. |
 | nat.mapStatsInterval | string | `"30s"` | Interval between how often SNAT map is counted for stats. |
+| bpfIPv4OverIPv6 | object | `{"enabled":false}` | Configure pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays. |
+| bpfIPv4OverIPv6.enabled | bool | `false` | Enable pure BPF IPv4-over-IPv6 (`ipip6`) pod forwarding for remote pod IPv4 traffic on IPv6-only underlays. Requires IPv4, IPv6, and native routing mode. |
 | nat46x64Gateway | object | `{"enabled":false}` | Configure standalone NAT46/NAT64 gateway |
 | nat46x64Gateway.enabled | bool | `false` | Enable RFC6052-prefixed translation |
 | nativeRoutingCIDRFromClusterPool | bool | `false` | Derive the native routing CIDRs from the cluster-pool IPAM CIDRs when ipv4NativeRoutingCIDR / ipv6NativeRoutingCIDR are not explicitly set. Only effective with ipam.mode=cluster-pool and requires exactly one CIDR per enabled IP family in clusterPoolIPv4PodCIDRList / clusterPoolIPv6PodCIDRList. |

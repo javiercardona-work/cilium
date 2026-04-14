@@ -65,6 +65,7 @@ import (
 	"github.com/cilium/cilium/pkg/maglev"
 	ipmasqmaps "github.com/cilium/cilium/pkg/maps/ipmasq"
 	"github.com/cilium/cilium/pkg/maps/iptrace"
+	ipv4overipv6map "github.com/cilium/cilium/pkg/maps/ipv4overipv6"
 	"github.com/cilium/cilium/pkg/maps/metricsmap"
 	natStats "github.com/cilium/cilium/pkg/maps/nat/stats"
 	"github.com/cilium/cilium/pkg/maps/ratelimitmap"
@@ -230,6 +231,10 @@ var (
 
 		// NodeManager maintains a collection of other nodes in the cluster.
 		nodeManager.Cell,
+
+		// Populate the tunnel endpoint IPv4 -> node IPv6 map used by the
+		// pure BPF ipip6 IPv4-over-IPv6 pod-forwarding datapath.
+		ipv4overipv6map.Cell,
 
 		// NodeNeighborDiscovery is a node handler that subscribes to the NodeManager
 		// and ensures node IPs are "forwardable" by adding them to the forwardable IP table.
