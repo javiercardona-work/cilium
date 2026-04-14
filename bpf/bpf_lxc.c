@@ -26,6 +26,7 @@
 #include "lib/edt.h"
 #include "lib/ipv6.h"
 #include "lib/ipv4.h"
+#include "lib/ipv4_over_ipv6.h"
 #include "lib/icmp6.h"
 #include "lib/eth.h"
 #include "lib/dbg.h"
@@ -1531,6 +1532,41 @@ int cil_from_container(struct __ctx_buff *ctx)
 #ifdef ENABLE_IPV4
 	case bpf_htons(ETH_P_IP):
 		edt_set_aggregate(ctx, LXC_ID);
+#ifdef ENABLE_BPF_IPV4_OVER_IPV6
+		{
+			void *de, *dee;
+			struct iphdr *i4;
+			if (revalidate_data(ctx, &de, &dee, &i4)) {
+				struct remote_endpoint_info *ri = lookup_ip4_remote_endpoint(i4->daddr, 0);
+				if (ri && ri->flag_has_tunnel_ep && ri->tunnel_endpoint.ip4 &&
+				    !identity_is_host(ri->sec_identity)) {
+					union v6addr rv6;
+					if (ipv4_over_ipv6_lookup_node(ri->tunnel_endpoint.ip4, &rv6)) {
+						union v6addr lv6 = IPV6_DIRECT_ROUTING;
+						__u16 il = bpf_ntohs(i4->tot_len);
+						struct ipv6hdr h6 = {};
+						__be16 et = bpf_htons(ETH_P_IPV6);
+						h6.version = 6;
+						h6.payload_len = bpf_htons(il);
+						h6.nexthdr = IPPROTO_IPIP;
+						h6.hop_limit = 64;
+						memcpy(&h6.saddr, &lv6, 16);
+						memcpy(&h6.daddr, &rv6, 16);
+						/* Emit pure BPF ipip6 by prepending only an
+						 * outer IPv6 header ahead of the full inner
+						 * IPv4 packet.
+						 */
+						if (ctx_adjust_hroom(ctx, sizeof(h6), BPF_ADJ_ROOM_MAC,
+							BPF_F_ADJ_ROOM_ENCAP_L3_IPV6) == 0 &&
+						    ctx_store_bytes(ctx, ETH_HLEN, &h6, sizeof(h6), 0) >= 0 &&
+						    ctx_store_bytes(ctx, offsetof(struct ethhdr, h_proto),
+								    &et, sizeof(et), 0) >= 0)
+							return CTX_ACT_OK;
+					}
+				}
+			}
+		}
+#endif /* ENABLE_BPF_IPV4_OVER_IPV6 */
 		ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_FROM_LXC, &ext_err);
 		sec_label = SECLABEL_IPV4;
 		break;

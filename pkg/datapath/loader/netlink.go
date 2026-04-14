@@ -58,8 +58,8 @@ func enableForwarding(logger *slog.Logger, sysctl sysctl.Sysctl, link netlink.Li
 		sysSettings = append(sysSettings, []tables.Sysctl{
 			{Name: []string{"net", "ipv4", "conf", ifName, "forwarding"}, Val: "1", IgnoreErr: false},
 			{Name: []string{"net", "ipv4", "conf", ifName, "rp_filter"}, Val: "0", IgnoreErr: true, Warn: "Unable to disable rp_filter. This can be ignored when Cilium is running in a user namespace"},
-			{Name: []string{"net", "ipv4", "conf", ifName, "accept_local"}, Val: "1", IgnoreErr: false},
-			{Name: []string{"net", "ipv4", "conf", ifName, "send_redirects"}, Val: "0", IgnoreErr: false},
+			{Name: []string{"net", "ipv4", "conf", ifName, "accept_local"}, Val: "1", IgnoreErr: true, Warn: "Unable to set accept_local. This can be ignored when Cilium is running in a user namespace"},
+			{Name: []string{"net", "ipv4", "conf", ifName, "send_redirects"}, Val: "0", IgnoreErr: true, Warn: "Unable to disable send_redirects. This can be ignored when Cilium is running in a user namespace"},
 		}...)
 	}
 	if err := sysctl.ApplySettings(sysSettings); err != nil {

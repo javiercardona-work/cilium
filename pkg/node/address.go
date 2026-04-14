@@ -87,7 +87,21 @@ func setDefaultPrefix(logger *slog.Logger, cfg *option.DaemonConfig, device stri
 
 		ip, err := firstGlobalV4Addr(device, node.GetCiliumInternalIP(isIPv6), preferPublicIP)
 		if err != nil {
-			return
+			// On IPv6-only hosts, no global IPv4 address exists on any interface.
+			// Fall back to deriving a node IPv4 from the pod CIDR (.1 address).
+			if node.IPv4AllocCIDR != nil {
+				cidrIP := node.IPv4AllocCIDR.IP.To4()
+				if cidrIP != nil {
+					ip = net.IPv4(cidrIP[0], cidrIP[1], cidrIP[2], 1)
+					logger.Warn("No IPv4 on host interfaces, deriving node IPv4 from pod CIDR",
+						"nodeIPv4", ip,
+						"podCIDR", node.IPv4AllocCIDR,
+					)
+				}
+			}
+			if ip == nil {
+				return
+			}
 		}
 
 		if node.GetNodeIP(isIPv6) == nil {
