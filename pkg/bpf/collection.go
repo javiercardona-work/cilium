@@ -386,6 +386,10 @@ func LoadCollection(logger *slog.Logger, spec *ebpf.CollectionSpec, opts *Collec
 		return nil, nil, err
 	}
 
+	if err := registerTrackedCollection(spec, coll, opts.CollectionOptions.Maps.PinPath); err != nil {
+		logger.Warn("Failed to register tracked BPF objects for scoped metrics", logfields.Error, err)
+	}
+
 	// Collect Maps that need their bpffs pins replaced. Pull out Map objects
 	// before returning the Collection, since commit() still needs to work when
 	// the Map is removed from the Collection, e.g. by [ebpf.Collection.Assign].

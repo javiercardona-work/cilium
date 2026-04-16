@@ -33,11 +33,15 @@ type RegistryConfig struct {
 	PrometheusServeAddr string
 	// This is a list of metrics to be enabled or disabled, format is `+`/`-` + `{metric name}`
 	Metrics []string
+	// BPFMetricsCiliumOwnedOnly restricts the BPF usage collector to Cilium-owned
+	// objects instead of enumerating all kernel BPF programs and maps.
+	BPFMetricsCiliumOwnedOnly bool
 }
 
 func (rc RegistryConfig) Flags(flags *pflag.FlagSet) {
 	flags.String("prometheus-serve-addr", rc.PrometheusServeAddr, "IP:Port on which to serve prometheus metrics (pass \":Port\" to bind on all interfaces, \"\" is off)")
 	flags.StringSlice("metrics", rc.Metrics, "Metrics that should be enabled or disabled from the default metric list. (+metric_foo to enable metric_foo, -metric_bar to disable metric_bar)")
+	flags.Bool("bpf-metrics-cilium-owned-only", rc.BPFMetricsCiliumOwnedOnly, "Restrict BPF usage metrics to Cilium-owned programs and maps instead of enumerating all kernel BPF objects")
 }
 
 // RegistryParams are the parameters needed to construct a Registry

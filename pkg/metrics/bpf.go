@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/cilium/ebpf"
 	"github.com/prometheus/client_golang/prometheus"
@@ -34,11 +35,41 @@ import (
 // For now, settle on matching both the entrypoint and the tail call name
 // prefixes and collecting associated maps.
 
-type bpfUsage struct {
-	programs     uint64
-	programBytes uint64
-	maps         uint64
-	mapBytes     uint64
+// BPFUsageStats is the aggregated memory and object count returned by a BPF
+// usage provider.
+type BPFUsageStats struct {
+	Programs     uint64
+	ProgramBytes uint64
+	Maps         uint64
+	MapBytes     uint64
+}
+
+type bpfUsage = BPFUsageStats
+
+// BPFUsageProvider returns a snapshot of BPF usage metrics.
+type BPFUsageProvider func() (*BPFUsageStats, error)
+
+var (
+	bpfUsageProviderMu sync.RWMutex
+	bpfUsageProvider   BPFUsageProvider
+
+	defaultBPFUsageProvider = func() (*BPFUsageStats, error) {
+		return newBPFVisitor([]string{"cil_", "tail_"}).Usage()
+	}
+)
+
+// RegisterBPFUsageProvider installs an alternate BPF usage provider for the
+// collector's scoped mode.
+func RegisterBPFUsageProvider(provider BPFUsageProvider) {
+	bpfUsageProviderMu.Lock()
+	bpfUsageProvider = provider
+	bpfUsageProviderMu.Unlock()
+}
+
+func getBPFUsageProvider() BPFUsageProvider {
+	bpfUsageProviderMu.RLock()
+	defer bpfUsageProviderMu.RUnlock()
+	return bpfUsageProvider
 }
 
 func newBPFVisitor(progPrefixes []string) *bpfVisitor {
@@ -120,8 +151,8 @@ func (v *bpfVisitor) visitProgram(id ebpf.ProgramID, prefixes []string) error {
 		return fmt.Errorf("program %s has zero memlock", info.Name)
 	}
 
-	v.programs++
-	v.programBytes += mem
+	v.Programs++
+	v.ProgramBytes += mem
 
 	maps, _ := info.MapIDs()
 	for _, mapID := range maps {
@@ -158,8 +189,8 @@ func (v *bpfVisitor) visitMap(id ebpf.MapID) error {
 	// empty. Zero memory usage can be valid for a map.
 	mem, _ := info.Memlock()
 
-	v.maps++
-	v.mapBytes += mem
+	v.Maps++
+	v.MapBytes += mem
 
 	return nil
 }
@@ -168,15 +199,18 @@ type bpfCollector struct {
 	logger *slog.Logger
 	sfg    singleflight.Group
 
+	ciliumOwnedOnly bool
+
 	bpfMapsCount      *prometheus.Desc
 	bpfMapsMemory     *prometheus.Desc
 	bpfProgramsCount  *prometheus.Desc
 	bpfProgramsMemory *prometheus.Desc
 }
 
-func newbpfCollector(logger *slog.Logger) *bpfCollector {
+func newbpfCollector(logger *slog.Logger, ciliumOwnedOnly bool) *bpfCollector {
 	return &bpfCollector{
-		logger: logger,
+		logger:          logger,
+		ciliumOwnedOnly: ciliumOwnedOnly,
 		bpfMapsCount: prometheus.NewDesc(
 			prometheus.BuildFQName(Namespace, "", "bpf_maps"),
 			"Total count of BPF maps.",
@@ -204,11 +238,21 @@ func (s *bpfCollector) Describe(ch chan<- *prometheus.Desc) {
 	prometheus.DescribeByCollect(s, ch)
 }
 
+func (s *bpfCollector) usageProvider() BPFUsageProvider {
+	if s.ciliumOwnedOnly {
+		if provider := getBPFUsageProvider(); provider != nil {
+			return provider
+		}
+	}
+
+	return defaultBPFUsageProvider
+}
+
 func (s *bpfCollector) Collect(ch chan<- prometheus.Metric) {
 	// Avoid querying BPF multiple times concurrently, if it happens, additional callers will wait for the
 	// first one to finish and reuse its resulting values.
 	results, err, _ := s.sfg.Do("collect", func() (any, error) {
-		return newBPFVisitor([]string{"cil_", "tail_"}).Usage()
+		return s.usageProvider()()
 	})
 
 	if err != nil {
@@ -219,24 +263,24 @@ func (s *bpfCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		s.bpfMapsCount,
 		prometheus.GaugeValue,
-		float64(results.(*bpfUsage).maps),
+		float64(results.(*bpfUsage).Maps),
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		s.bpfMapsMemory,
 		prometheus.GaugeValue,
-		float64(results.(*bpfUsage).mapBytes),
+		float64(results.(*bpfUsage).MapBytes),
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		s.bpfProgramsCount,
 		prometheus.GaugeValue,
-		float64(results.(*bpfUsage).programs),
+		float64(results.(*bpfUsage).Programs),
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		s.bpfProgramsMemory,
 		prometheus.GaugeValue,
-		float64(results.(*bpfUsage).programBytes),
+		float64(results.(*bpfUsage).ProgramBytes),
 	)
 }
