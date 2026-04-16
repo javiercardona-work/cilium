@@ -6,6 +6,7 @@ package server
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"path"
 	"time"
 
@@ -453,27 +454,54 @@ func NewServer(logger *slog.Logger, config Config, enableActiveChecks bool) (*Se
 }
 
 // Get internal node ipv4/ipv6 addresses based on config enabled.
-// If it fails to get either of internal node address, it returns "0.0.0.0" if ipv4 or "::" if ipv6.
+// Only return addresses that are actually assigned in the current network
+// namespace. If a node family is synthetically derived but not locally
+// bindable, skip it and let the responder listen on the remaining valid
+// families.
 func getAddresses(logger *slog.Logger) []string {
+	return getAddressesWithLocalCheck(logger, isLocalAddress)
+}
+
+func getAddressesWithLocalCheck(logger *slog.Logger, isLocal func(net.IP) bool) []string {
 	addresses := make([]string, 0, 2)
 
 	if option.Config.EnableIPv4 {
-		if ip := node.GetInternalIPv4(logger); ip != nil {
+		if ip := node.GetInternalIPv4(logger); ip != nil && isLocal(ip) {
 			addresses = append(addresses, ip.String())
-		} else {
-			// if Get ipv4 fails, then listen on all addresses.
-			return nil
 		}
 	}
 
 	if option.Config.EnableIPv6 {
-		if ip := node.GetInternalIPv6(logger); ip != nil {
+		if ip := node.GetInternalIPv6(logger); ip != nil && isLocal(ip) {
 			addresses = append(addresses, ip.String())
-		} else {
-			// if Get ipv6 fails, then listen on all addresses.
-			return nil
 		}
 	}
 
 	return addresses
+}
+
+func isLocalAddress(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+
+	for _, addr := range addrs {
+		switch a := addr.(type) {
+		case *net.IPNet:
+			if a.IP.Equal(ip) {
+				return true
+			}
+		case *net.IPAddr:
+			if a.IP.Equal(ip) {
+				return true
+			}
+		}
+	}
+
+	return false
 }

@@ -5,6 +5,8 @@ package server
 
 import (
 	"bufio"
+	"log/slog"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,8 @@ import (
 	healthModels "github.com/cilium/cilium/api/v1/health/models"
 	"github.com/cilium/cilium/pkg/metrics"
 	"github.com/cilium/cilium/pkg/metrics/metric"
+	"github.com/cilium/cilium/pkg/node"
+	"github.com/cilium/cilium/pkg/option"
 )
 
 const (
@@ -443,6 +447,33 @@ func Test_server_getClusterNodeName(t *testing.T) {
 			require.Equal(t, tt.expectedNodeName, nodeName)
 		})
 	}
+}
+
+func TestGetAddressesWithLocalCheckSkipsUnboundInternalIP(t *testing.T) {
+	oldEnableIPv4 := option.Config.EnableIPv4
+	oldEnableIPv6 := option.Config.EnableIPv6
+	option.Config.EnableIPv4 = true
+	option.Config.EnableIPv6 = true
+	defer func() {
+		option.Config.EnableIPv4 = oldEnableIPv4
+		option.Config.EnableIPv6 = oldEnableIPv6
+	}()
+
+	node.WithTestLocalNodeStore(func() {
+		ipv4 := net.ParseIP("10.244.207.64")
+		ipv6 := net.ParseIP("2803:6084:28e4:2a1e:7f2d:7ceb:14cf:a00")
+
+		node.UpdateLocalNodeInTest(func(n *node.LocalNode) {
+			n.SetNodeInternalIP(ipv4)
+			n.SetNodeInternalIP(ipv6)
+		})
+
+		addresses := getAddressesWithLocalCheck(slog.Default(), func(ip net.IP) bool {
+			return ip.Equal(ipv6)
+		})
+
+		require.Equal(t, []string{ipv6.String()}, addresses)
+	})
 }
 
 func Test_server_collectNodeConnectivityMetrics(t *testing.T) {
