@@ -166,17 +166,16 @@ type identityAllocatorOwner struct {
 // GetNodeSuffix returns the suffix to be appended to kvstore keys of this
 // agent
 func (iao *identityAllocatorOwner) GetNodeSuffix() string {
-	var ip net.IP
-
 	ln, err := iao.localNodeStore.Get(context.Background())
 	if err != nil {
 		logging.Fatal(iao.logger, "Failed to retrieve local node")
 	}
 
-	switch {
-	case option.Config.EnableIPv4:
+	var ip net.IP
+	if option.Config.EnableIPv4 {
 		ip = ln.GetNodeIP(false)
-	case option.Config.EnableIPv6:
+	}
+	if ip == nil && option.Config.EnableIPv6 {
 		ip = ln.GetNodeIP(true)
 	}
 

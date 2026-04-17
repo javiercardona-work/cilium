@@ -270,7 +270,8 @@ func (r *IPAMInitializer) ValidatePostInit(ctx context.Context) error {
 	}
 
 	if r.daemonConfig.EnableIPv4 {
-		if ln.GetNodeIP(false) == nil {
+		if ln.GetNodeIP(false) == nil &&
+			!(r.daemonConfig.EnableBPFIPv4OverIPv6 && ln.GetNodeIP(true) != nil) {
 			return fmt.Errorf("external IPv4 node address could not be derived, please configure via --ipv4-node")
 		}
 	}
