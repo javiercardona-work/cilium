@@ -177,6 +177,42 @@ func TestPrivilegedWriteNodeConfig(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestPrivilegedWriteNodeConfigFallsBackToCiliumInternalIPv4ForDirectRouting(t *testing.T) {
+	testutils.PrivilegedTest(t)
+
+	oldEnableIPv4 := option.Config.EnableIPv4
+	defer func() {
+		option.Config.EnableIPv4 = oldEnableIPv4
+	}()
+	option.Config.EnableIPv4 = true
+
+	cfg, err := NewHeaderfileWriter(WriterParams{
+		NodeAddressing: fakenode.NewAddressing(),
+		Sysctl:         sysctl.NewDirectSysctl(afero.NewOsFs(), "/proc"),
+		NodeMap:        fake.NewFakeNodeMapV2(),
+		KPRConfig:      kpr.KPRConfig{EnableNodePort: true},
+	})
+	require.NoError(t, err)
+
+	localCfg := dummyNodeCfg
+	localCfg.NodeIPv4 = netip.Addr{}
+	localCfg.CiliumInternalIPv4 = netip.MustParseAddr("10.244.157.109")
+	localCfg.DirectRoutingDevice = &tables.Device{
+		Index: 7,
+		Addrs: []tables.DeviceAddress{
+			{Addr: netip.MustParseAddr("2803:6084:287c:4421:b292:b4f0:14a8:a00")},
+		},
+	}
+
+	var buffer bytes.Buffer
+	require.NoError(t, cfg.WriteNodeConfig(&buffer, &localCfg))
+	require.Contains(
+		t,
+		buffer.String(),
+		fmt.Sprintf("#define IPV4_DIRECT_ROUTING %d\n", byteorder.NetIPAddrToHost32(localCfg.CiliumInternalIPv4)),
+	)
+}
+
 func TestPrivilegedWriteNetdevConfig(t *testing.T) {
 	setupConfigSuite(t)
 	writeConfig(t, "netdev", func(w io.Writer, dp Writer) error {
