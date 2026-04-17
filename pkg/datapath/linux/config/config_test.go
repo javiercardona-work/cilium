@@ -19,12 +19,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
 
+	"github.com/cilium/cilium/pkg/byteorder"
 	"github.com/cilium/cilium/pkg/cidr"
 	fakeTypes "github.com/cilium/cilium/pkg/datapath/fake/types"
 	dpdef "github.com/cilium/cilium/pkg/datapath/linux/config/defines"
 	"github.com/cilium/cilium/pkg/datapath/linux/sysctl"
 	"github.com/cilium/cilium/pkg/datapath/tables"
 	datapath "github.com/cilium/cilium/pkg/datapath/types"
+	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/hive"
 	"github.com/cilium/cilium/pkg/kpr"
 	"github.com/cilium/cilium/pkg/loadbalancer"
@@ -122,6 +124,47 @@ func TestPrivilegedWriteNodeConfig(t *testing.T) {
 	writeConfig(t, "node", func(w io.Writer, dp datapath.ConfigWriter) error {
 		return dp.WriteNodeConfig(w, &dummyNodeCfg)
 	})
+}
+
+func TestPrivilegedWriteNodeConfigFallsBackToCiliumInternalIPv4ForDirectRouting(t *testing.T) {
+	testutils.PrivilegedTest(t)
+
+	oldEnableIPv4 := option.Config.EnableIPv4
+	defer func() {
+		option.Config.EnableIPv4 = oldEnableIPv4
+	}()
+	option.Config.EnableIPv4 = true
+
+	ciliumNet := createMainLink(defaults.SecondHostDevice, t)
+	defer netlink.LinkDel(ciliumNet)
+	ciliumHost := createMainLink(defaults.HostDevice, t)
+	defer netlink.LinkDel(ciliumHost)
+
+	cfg, err := NewHeaderfileWriter(WriterParams{
+		NodeAddressing: fakeTypes.NewNodeAddressing(),
+		Sysctl:         sysctl.NewDirectSysctl(afero.NewOsFs(), "/proc"),
+		NodeMap:        fake.NewFakeNodeMapV2(),
+		KPRConfig:      kpr.KPRConfig{EnableNodePort: true},
+	})
+	require.NoError(t, err)
+
+	localCfg := dummyNodeCfg
+	localCfg.NodeIPv4 = nil
+	localCfg.CiliumInternalIPv4 = netip.MustParseAddr("10.244.157.109").AsSlice()
+	localCfg.DirectRoutingDevice = &tables.Device{
+		Index: 7,
+		Addrs: []tables.DeviceAddress{
+			{Addr: netip.MustParseAddr("2803:6084:287c:4421:b292:b4f0:14a8:a00")},
+		},
+	}
+
+	var buffer bytes.Buffer
+	require.NoError(t, cfg.WriteNodeConfig(&buffer, &localCfg))
+	require.Contains(
+		t,
+		buffer.String(),
+		fmt.Sprintf("#define IPV4_DIRECT_ROUTING %d\n", byteorder.NetIPv4ToHost32(localCfg.CiliumInternalIPv4)),
+	)
 }
 
 func TestPrivilegedWriteNetdevConfig(t *testing.T) {

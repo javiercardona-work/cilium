@@ -518,9 +518,12 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *datapath.LocalNodeC
 			}
 			if ipv4 == 0 {
 				// On IPv6-only hosts, the direct routing device (eth0) has no IPv4.
-				// Fall back to the derived node IPv4 (from pod CIDR) for BPF defines.
+				// Fall back to the best locally usable IPv4 for BPF defines.
 				if cfg.NodeIPv4 != nil {
 					ipv4 = byteorder.NetIPv4ToHost32(cfg.NodeIPv4)
+				}
+				if ipv4 == 0 && cfg.CiliumInternalIPv4 != nil {
+					ipv4 = byteorder.NetIPv4ToHost32(cfg.CiliumInternalIPv4)
 				}
 				if ipv4 == 0 {
 					return fmt.Errorf("IPv4 direct routing device IP not found")
