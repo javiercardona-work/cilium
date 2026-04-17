@@ -153,3 +153,48 @@ func TestSetDefaultPrefixPanicsWhenIPv4AllocCIDRAutogenNeedsMissingGlobalIPv4(t 
 		},
 	)
 }
+
+func TestValidatePostInitAllowsIPv4OverIPv6WithoutExternalIPv4(t *testing.T) {
+	oldEnableIPv4 := option.Config.EnableIPv4
+	oldEnableIPv6 := option.Config.EnableIPv6
+	oldEnableBPFIPv4OverIPv6 := option.Config.EnableBPFIPv4OverIPv6
+	defer func() {
+		option.Config.EnableIPv4 = oldEnableIPv4
+		option.Config.EnableIPv6 = oldEnableIPv6
+		option.Config.EnableBPFIPv4OverIPv6 = oldEnableBPFIPv4OverIPv6
+	}()
+
+	option.Config.EnableIPv4 = true
+	option.Config.EnableIPv6 = true
+	option.Config.EnableBPFIPv4OverIPv6 = true
+
+	WithTestLocalNodeStore(func() {
+		UpdateLocalNodeInTest(func(n *LocalNode) {
+			n.SetNodeInternalIP(net.ParseIP("fd00::10"))
+			n.SetCiliumInternalIP(net.ParseIP("10.244.157.109"))
+		})
+
+		require.NoError(t, ValidatePostInit(slog.Default()))
+	})
+}
+
+func TestGetPreferredNodeIPFallsBackToIPv6(t *testing.T) {
+	oldEnableIPv4 := option.Config.EnableIPv4
+	oldEnableIPv6 := option.Config.EnableIPv6
+	defer func() {
+		option.Config.EnableIPv4 = oldEnableIPv4
+		option.Config.EnableIPv6 = oldEnableIPv6
+	}()
+
+	option.Config.EnableIPv4 = true
+	option.Config.EnableIPv6 = true
+
+	WithTestLocalNodeStore(func() {
+		UpdateLocalNodeInTest(func(n *LocalNode) {
+			n.SetNodeInternalIP(net.ParseIP("fd00::20"))
+		})
+
+		require.Equal(t, "fd00::20", GetPreferredNodeIP(slog.Default()).String())
+		require.Equal(t, "fd00::20", GetCiliumEndpointNodeIP(slog.Default()))
+	})
+}

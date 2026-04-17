@@ -30,7 +30,7 @@ import (
 const preferPublicIP bool = true
 
 var (
-	addrs addresses
+	addrs               addresses
 	firstGlobalV4AddrFn = firstGlobalV4Addr
 
 	// localNode holds the current state of the local "types.Node".
@@ -235,6 +235,25 @@ func GetIPv4(logger *slog.Logger) net.IP {
 	return clone(n.GetNodeIP(false))
 }
 
+// GetPreferredNodeIP returns the node IP using the configured family
+// preference. IPv4 is preferred when enabled and available, otherwise IPv6 is
+// used when enabled and available.
+func GetPreferredNodeIP(logger *slog.Logger) net.IP {
+	if option.Config.EnableIPv4 {
+		if ip := GetIPv4(logger); ip != nil {
+			return ip
+		}
+	}
+
+	if option.Config.EnableIPv6 {
+		if ip := GetIPv6(logger); ip != nil {
+			return ip
+		}
+	}
+
+	return nil
+}
+
 // GetInternalIPv4 returns node internal ipv4 address else return nil.
 func GetInternalIPv4(logger *slog.Logger) net.IP {
 	n := getLocalNode(logger)
@@ -250,10 +269,10 @@ func GetInternalIPv6(logger *slog.Logger) net.IP {
 // GetCiliumEndpointNodeIP is the node IP that will be referenced by CiliumEndpoints with endpoints
 // running on this node.
 func GetCiliumEndpointNodeIP(logger *slog.Logger) string {
-	if option.Config.EnableIPv4 {
-		return GetIPv4(logger).String()
+	if ip := GetPreferredNodeIP(logger); ip != nil {
+		return ip.String()
 	}
-	return GetIPv6(logger).String()
+	return ""
 }
 
 // SetInternalIPv4Router sets the cilium internal IPv4 node address, it is allocated from the node prefix.
@@ -322,7 +341,7 @@ func AutoComplete(logger *slog.Logger, directRoutingDevice string) error {
 // required
 func ValidatePostInit(logger *slog.Logger) error {
 	if option.Config.EnableIPv4 {
-		if GetIPv4(logger) == nil {
+		if GetIPv4(logger) == nil && !(option.Config.EnableBPFIPv4OverIPv6 && GetIPv6(logger) != nil) {
 			return fmt.Errorf("external IPv4 node address could not be derived, please configure via --ipv4-node")
 		}
 	}

@@ -157,12 +157,7 @@ type identityAllocatorOwner struct {
 func (iao *identityAllocatorOwner) GetNodeSuffix() string {
 	var ip net.IP
 
-	switch {
-	case option.Config.EnableIPv4:
-		ip = node.GetIPv4(iao.logger)
-	case option.Config.EnableIPv6:
-		ip = node.GetIPv6(iao.logger)
-	}
+	ip = node.GetPreferredNodeIP(iao.logger)
 
 	if ip == nil {
 		logging.Fatal(iao.logger, "Node IP not available yet")
