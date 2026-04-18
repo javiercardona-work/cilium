@@ -44,7 +44,7 @@ func (d *Daemon) allocateRouterIPv4(family types.NodeAddressingFamily, fromK8s, 
 		}
 		return routerIP, nil
 	} else {
-		return d.allocateDatapathIPs(family, fromK8s, fromFS)
+		return d.allocateDatapathIPs(family, ipam.IPv4, fromK8s, fromFS)
 	}
 }
 
@@ -59,7 +59,7 @@ func (d *Daemon) allocateRouterIPv6(family types.NodeAddressingFamily, fromK8s, 
 		}
 		return routerIP, nil
 	} else {
-		return d.allocateDatapathIPs(family, fromK8s, fromFS)
+		return d.allocateDatapathIPs(family, ipam.IPv6, fromK8s, fromFS)
 	}
 }
 
@@ -146,9 +146,11 @@ func reallocateDatapathIPs(logger *slog.Logger, alloc ipamAllocateIP, fromK8s, f
 	return result
 }
 
-func (d *Daemon) allocateDatapathIPs(family types.NodeAddressingFamily, fromK8s, fromFS net.IP) (routerIP net.IP, err error) {
+func (d *Daemon) allocateDatapathIPs(family types.NodeAddressingFamily, ipFamily ipam.Family, fromK8s, fromFS net.IP) (routerIP net.IP, err error) {
 	// Avoid allocating external IP
-	d.ipam.ExcludeIP(family.PrimaryExternal(), "node-ip", ipam.PoolDefault())
+	if nodeIP := family.PrimaryExternal(); nodeIP != nil {
+		d.ipam.ExcludeIP(nodeIP, "node-ip", ipam.PoolDefault())
+	}
 
 	// (Re-)allocate the router IP. If not possible, allocate a fresh IP.
 	// In that case, the old router IP needs to be removed from cilium_host
@@ -157,16 +159,14 @@ func (d *Daemon) allocateDatapathIPs(family types.NodeAddressingFamily, fromK8s,
 	// have been regenerated.
 	result := reallocateDatapathIPs(d.logger, d.ipam, fromK8s, fromFS)
 	if result == nil {
-		family := ipam.DeriveFamily(family.PrimaryExternal())
-		result, err = d.ipam.AllocateNextFamilyWithoutSyncUpstream(family, "router", ipam.PoolDefault())
+		result, err = d.ipam.AllocateNextFamilyWithoutSyncUpstream(ipFamily, "router", ipam.PoolDefault())
 		if err != nil {
-			return nil, fmt.Errorf("Unable to allocate router IP for family %s: %w", family, err)
+			return nil, fmt.Errorf("Unable to allocate router IP for family %s: %w", ipFamily, err)
 		}
 	}
 
-	ipfamily := ipam.DeriveFamily(family.PrimaryExternal())
-	masq := (ipfamily == ipam.IPv4 && option.Config.EnableIPv4Masquerade) ||
-		(ipfamily == ipam.IPv6 && option.Config.EnableIPv6Masquerade)
+	masq := (ipFamily == ipam.IPv4 && option.Config.EnableIPv4Masquerade) ||
+		(ipFamily == ipam.IPv6 && option.Config.EnableIPv6Masquerade)
 
 	// Coalescing multiple CIDRs. GH #18868
 	if masq &&

@@ -4,15 +4,28 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"testing"
 
+	"github.com/cilium/hive/hivetest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	agentK8s "github.com/cilium/cilium/daemon/k8s"
 	"github.com/cilium/cilium/pkg/cidr"
+	fakeTypes "github.com/cilium/cilium/pkg/datapath/fake/types"
+	datapathTypes "github.com/cilium/cilium/pkg/datapath/types"
 	"github.com/cilium/cilium/pkg/ipam"
+	ipamPkg "github.com/cilium/cilium/pkg/ipam"
+	ipamOption "github.com/cilium/cilium/pkg/ipam/option"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	"github.com/cilium/cilium/pkg/k8s/resource"
+	"github.com/cilium/cilium/pkg/node"
+	"github.com/cilium/cilium/pkg/option"
 )
 
 func TestCoalesceCIDRs(t *testing.T) {
@@ -79,6 +92,34 @@ func (m mockAllocateIP) AllocateIPWithoutSyncUpstream(ip net.IP, owner string, p
 	return m(ip, owner, pool)
 }
 
+type ownerMock struct{}
+
+func (o *ownerMock) K8sEventReceived(resourceAPIGroup, scope string, action string, valid, equal bool) {
+}
+
+func (o *ownerMock) K8sEventProcessed(scope string, action string, status bool) {}
+
+func (o *ownerMock) UpdateCiliumNodeResource() {}
+
+type resourceMock struct{}
+
+func (rm *resourceMock) Observe(ctx context.Context, next func(resource.Event[*ciliumv2.CiliumNode]), complete func(error)) {
+}
+
+func (rm *resourceMock) Events(ctx context.Context, opts ...resource.EventsOpt) <-chan resource.Event[*ciliumv2.CiliumNode] {
+	return nil
+}
+
+func (rm *resourceMock) Store(context.Context) (resource.Store[*ciliumv2.CiliumNode], error) {
+	return nil, errors.New("unimplemented")
+}
+
+type fakeMTU struct{}
+
+func (f *fakeMTU) GetDeviceMTU() int { return 1500 }
+
+var mtuMock = fakeMTU{}
+
 func TestDaemon_reallocateDatapathIPs(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 
@@ -128,4 +169,41 @@ func TestDaemon_reallocateDatapathIPs(t *testing.T) {
 	result = reallocateDatapathIPs(logger, alloc, fromK8s, invalidFromFS)
 	assert.NotNil(t, result)
 	assert.Equal(t, result.IP, fromK8s)
+}
+
+type nilPrimaryExternalFamily struct {
+	datapathTypes.NodeAddressingFamily
+}
+
+func (f nilPrimaryExternalFamily) PrimaryExternal() net.IP {
+	return nil
+}
+
+func TestDaemon_allocateRouterIPv4WithoutPrimaryExternal(t *testing.T) {
+	oldConfig := option.Config
+	option.Config = &option.DaemonConfig{
+		EnableIPv4:        true,
+		EnableIPv6:        true,
+		IPAM:              ipamOption.IPAMKubernetes,
+		IPAMDefaultIPPool: "default",
+	}
+	t.Cleanup(func() {
+		option.Config = oldConfig
+	})
+
+	fakeAddressing := fakeTypes.NewNodeAddressing()
+	localNodeStore := node.NewTestLocalNodeStore(node.LocalNode{})
+	ipamMgr := ipamPkg.NewIPAM(hivetest.Logger(t), fakeAddressing, option.Config, &ownerMock{}, localNodeStore, &ownerMock{}, agentK8s.LocalCiliumNodeResource(&resourceMock{}), &mtuMock, nil, nil, nil)
+	ipamMgr.ConfigureAllocator()
+
+	d := &Daemon{
+		logger: hivetest.Logger(t),
+		ipam:   ipamMgr,
+	}
+
+	routerIP, err := d.allocateRouterIPv4(nilPrimaryExternalFamily{fakeAddressing.IPv4()}, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, routerIP)
+	assert.NotNil(t, routerIP.To4())
+	assert.True(t, fakeAddressing.IPv4().AllocationCIDR().Contains(routerIP))
 }
