@@ -747,8 +747,9 @@ contributors across the globe, there is almost always someone available to help.
 | namespaceOverride | string | `""` | namespaceOverride allows to override the destination namespace for Cilium resources. This property allows to use Cilium as part of an Umbrella Chart with different targets. |
 | nat.mapStatsEntries | int | `32` | Number of the top-k SNAT map connections to track in Cilium statedb. |
 | nat.mapStatsInterval | string | `"30s"` | Interval between how often SNAT map is counted for stats. |
-| bpfIPv4OverIPv6 | object | `{"enabled":false}` | Configure pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays. |
+| bpfIPv4OverIPv6 | object | `{"enabled":false,"externalDecapMark":0}` | Configure pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays. |
 | bpfIPv4OverIPv6.enabled | bool | `false` | Enable pure BPF IPv4-over-IPv6 (`ipip6`) pod forwarding for remote pod IPv4 traffic on IPv6-only underlays. Requires IPv4, IPv6, and native routing mode. |
+| bpfIPv4OverIPv6.externalDecapMark | int | `0` | Treat IPv4 packets arriving on native-device ingress with this skb mark as already-decapsulated IPv4-over-IPv6 tunnel traffic. Set to 0 to disable the compatibility path. |
 | nat46x64Gateway | object | `{"enabled":false}` | Configure standalone NAT46/NAT64 gateway |
 | nat46x64Gateway.enabled | bool | `false` | Enable RFC6052-prefixed translation |
 | nodeIPAM.enabled | bool | `false` | Configure Node IPAM ref: https://docs.cilium.io/en/stable/network/node-ipam/ |

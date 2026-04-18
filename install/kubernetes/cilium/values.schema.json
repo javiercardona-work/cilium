@@ -4246,6 +4246,9 @@
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "externalDecapMark": {
+          "type": "integer"
         }
       },
       "type": "object"

@@ -178,6 +178,14 @@ strips only that outer IPv6 header in BPF and then either delivers the inner
 IPv4 packet directly to a local endpoint or recirculates it into the IPv4
 netdev path with NodePort skipped.
 
+For environments where another ingress TC program decapsulates the outer IPv6
+header first, Cilium can also recognize the resulting plain IPv4 packet by skb
+mark. Set ``bpf-ipv4-over-ipv6-external-decap-mark`` to the non-zero mark value
+used by the external decap program. On IPv4 netdev ingress, packets with that
+mark are treated as already-decapsulated IPv4-over-IPv6 traffic, so Cilium
+applies the same from-tunnel local-delivery path and skips the NodePort front
+door. The default ``0`` disables this compatibility path.
+
 The sender resolves the remote node IPv6 through the
 ``cilium_ipv4_over_ipv6_nodes`` BPF map. This is a longest-prefix-match map
 keyed by destination IPv4. On startup the agent clears any stale pinned

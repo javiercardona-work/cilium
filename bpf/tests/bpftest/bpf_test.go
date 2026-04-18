@@ -26,6 +26,7 @@ import (
 	"github.com/cilium/coverbee"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/cilium/hive/hivetest"
 	"github.com/davecgh/go-spew/spew"
@@ -213,9 +214,9 @@ func loadAndRunSpec(t *testing.T, entry fs.DirEntry, instrLog io.Writer) []*cove
 	}
 
 	// Collect debug events and add them as logs of the main test
-	var globalLogReader *perf.Reader
+	var globalLogReader rawSampleReader
 	if m := coll.Maps[eventsmap.MapName]; m != nil {
-		globalLogReader, err = perf.NewReader(m, os.Getpagesize()*16)
+		globalLogReader, err = newRawSampleReader(m)
 		if err != nil {
 			t.Fatalf("new global log reader: %s", err.Error())
 		}
@@ -225,13 +226,13 @@ func loadAndRunSpec(t *testing.T, entry fs.DirEntry, instrLog io.Writer) []*cove
 
 		go func() {
 			for {
-				rec, err := globalLogReader.Read()
+				rawSample, err := globalLogReader.Read()
 				if err != nil {
 					return
 				}
 
 				dm := monitor.DebugMsg{}
-				reader := bytes.NewReader(rec.RawSample)
+				reader := bytes.NewReader(rawSample)
 				if err := binary.Read(reader, byteorder.Native, &dm); err != nil {
 					return
 				}
@@ -310,6 +311,58 @@ type programSet struct {
 	pktgenProg *ebpf.Program
 	setupProg  *ebpf.Program
 	checkProg  *ebpf.Program
+}
+
+type rawSampleReader interface {
+	Read() ([]byte, error)
+	Close() error
+}
+
+type perfRawSampleReader struct {
+	*perf.Reader
+}
+
+func (r perfRawSampleReader) Read() ([]byte, error) {
+	rec, err := r.Reader.Read()
+	if err != nil {
+		return nil, err
+	}
+
+	return rec.RawSample, nil
+}
+
+type ringbufRawSampleReader struct {
+	*ringbuf.Reader
+}
+
+func (r ringbufRawSampleReader) Read() ([]byte, error) {
+	rec, err := r.Reader.Read()
+	if err != nil {
+		return nil, err
+	}
+
+	return rec.RawSample, nil
+}
+
+func newRawSampleReader(m *ebpf.Map) (rawSampleReader, error) {
+	switch m.Type() {
+	case ebpf.PerfEventArray:
+		reader, err := perf.NewReader(m, os.Getpagesize()*16)
+		if err != nil {
+			return nil, err
+		}
+
+		return perfRawSampleReader{Reader: reader}, nil
+	case ebpf.RingBuf:
+		reader, err := ringbuf.NewReader(m)
+		if err != nil {
+			return nil, err
+		}
+
+		return ringbufRawSampleReader{Reader: reader}, nil
+	default:
+		return nil, fmt.Errorf("unsupported events map type %s", m.Type())
+	}
 }
 
 var checkProgRegex = regexp.MustCompile(`[^/]+/test/([^/]+)/((?:check)|(?:setup)|(?:pktgen))`)

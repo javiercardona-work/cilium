@@ -163,6 +163,7 @@ cilium-agent [flags]
       --enable-masquerade-to-route-source                         Masquerade packets to the source IP provided from the routing layer rather than interface address
       --enable-monitor                                            Enable the monitor unix domain socket server (default true)
       --enable-nat46x64-gateway                                   Enable NAT46 and NAT64 gateway
+      --bpf-ipv4-over-ipv6-external-decap-mark uint32             Treat IPv4 netdev ingress packets with this skb mark as already-decapsulated IPv4-over-IPv6 tunnel traffic; 0 disables the compatibility path
       --enable-bpf-ipv4-over-ipv6                                 Enable pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays
       --enable-node-selector-labels                               Enable use of node label based identity
       --enable-pmtu-discovery                                     Enable path MTU discovery to send ICMP fragmentation-needed replies to the client

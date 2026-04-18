@@ -69,6 +69,24 @@ static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __may
 }
 
 #ifdef ENABLE_BPF_IPV4_OVER_IPV6
+static __always_inline bool
+ipv4_over_ipv6_external_decap_marked(const struct __ctx_buff *ctx)
+{
+#if BPF_IPV4_OVER_IPV6_EXTERNAL_DECAP_MARK != 0
+	return ctx->mark == BPF_IPV4_OVER_IPV6_EXTERNAL_DECAP_MARK;
+#else
+	(void)ctx;
+	return false;
+#endif
+}
+
+static __always_inline void
+ipv4_over_ipv6_mark_external_decap(struct __ctx_buff *ctx)
+{
+	ctx_skip_nodeport_set(ctx);
+	ctx_store_meta(ctx, CB_FROM_TUNNEL, 1);
+}
+
 /* Strip the outer IPv6 header from the pure BPF ipip6 pod-forwarding path and
  * expose the original inner IPv4 packet to the regular IPv4 ingress logic.
  */
@@ -773,6 +791,11 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 	from_tunnel = ctx_load_meta(ctx, CB_FROM_TUNNEL);
 #endif
 
+#ifdef ENABLE_BPF_IPV4_OVER_IPV6
+	if (!from_host && !from_tunnel && ipv4_over_ipv6_external_decap_marked(ctx))
+		from_tunnel = true;
+#endif
+
 #ifdef ENABLE_HOST_FIREWALL
 	from_host_raw = ctx_load_and_clear_meta(ctx, CB_FROM_HOST);
 
@@ -1269,6 +1292,11 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
 		if (!revalidate_data_pull(ctx, &data, &data_end, &ip4))
 			return send_drop_notify_error(ctx, identity, DROP_INVALID,
 						      METRIC_INGRESS);
+
+#ifdef ENABLE_BPF_IPV4_OVER_IPV6
+		if (!from_host && ipv4_over_ipv6_external_decap_marked(ctx))
+			ipv4_over_ipv6_mark_external_decap(ctx);
+#endif
 
 		identity = resolve_srcid_ipv4(ctx, ip4, identity, &ipcache_srcid,
 					      from_host);

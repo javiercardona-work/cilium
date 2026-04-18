@@ -459,6 +459,10 @@ bpfIPv4OverIPv6:
   # IPv4 traffic on IPv6-only underlays. Requires IPv4, IPv6, and native
   # routing mode.
   enabled: false
+  # -- Treat IPv4 packets arriving on native-device ingress with this skb mark
+  # as already-decapsulated IPv4-over-IPv6 tunnel traffic. Set to 0 to disable
+  # the compatibility path.
+  externalDecapMark: 0
 # -- Configure standalone NAT46/NAT64 gateway
 nat46x64Gateway:
   # -- Enable RFC6052-prefixed translation

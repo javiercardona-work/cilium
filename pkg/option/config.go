@@ -139,6 +139,12 @@ const (
 	// IPv4-over-IPv6 pod forwarding on IPv6-only underlays.
 	EnableBPFIPv4OverIPv6 = "enable-bpf-ipv4-over-ipv6"
 
+	// BPFIPv4OverIPv6ExternalDecapMark is the skb mark value that, when
+	// observed on IPv4 netdev ingress, causes Cilium to treat the packet as
+	// already decapsulated tunnel traffic. Set to 0 to disable this
+	// compatibility path.
+	BPFIPv4OverIPv6ExternalDecapMark = "bpf-ipv4-over-ipv6-external-decap-mark"
+
 	// Add unreachable routes on pod deletion
 	EnableUnreachableRoutes = "enable-unreachable-routes"
 
@@ -1411,6 +1417,12 @@ type DaemonConfig struct {
 	// EnableBPFIPv4OverIPv6 is true when pure BPF IPv4-over-IPv6 pod forwarding
 	// is enabled for remote pod IPv4 traffic on IPv6-only underlays.
 	EnableBPFIPv4OverIPv6 bool
+
+	// BPFIPv4OverIPv6ExternalDecapMark is the skb mark value used to recognize
+	// packets that were already decapsulated by an external ingress program and
+	// should therefore be treated as from-tunnel on IPv4 netdev ingress.
+	// A value of 0 disables this compatibility path.
+	BPFIPv4OverIPv6ExternalDecapMark uint32
 
 	// EnableNat46X64Gateway is true when L3 based NAT46 and NAT64 translation is enabled
 	EnableNat46X64Gateway bool
@@ -2729,6 +2741,7 @@ func (c *DaemonConfig) Populate(logger *slog.Logger, vp *viper.Viper) {
 	c.EnableCustomCalls = vp.GetBool(EnableCustomCallsName)
 	c.BGPSecretsNamespace = vp.GetString(BGPSecretsNamespace)
 	c.EnableBPFIPv4OverIPv6 = vp.GetBool(EnableBPFIPv4OverIPv6)
+	c.BPFIPv4OverIPv6ExternalDecapMark = vp.GetUint32(BPFIPv4OverIPv6ExternalDecapMark)
 	c.EnableNat46X64Gateway = vp.GetBool(EnableNat46X64Gateway)
 	c.EnableIPv4Masquerade = vp.GetBool(EnableIPv4Masquerade) && c.EnableIPv4
 	c.EnableIPv6Masquerade = vp.GetBool(EnableIPv6Masquerade) && c.EnableIPv6

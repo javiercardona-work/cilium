@@ -385,6 +385,7 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *datapath.LocalNodeC
 		}
 		if option.Config.EnableBPFIPv4OverIPv6 {
 			cDefinesMap["ENABLE_BPF_IPV4_OVER_IPV6"] = "1"
+			cDefinesMap["BPF_IPV4_OVER_IPV6_EXTERNAL_DECAP_MARK"] = fmt.Sprintf("%d", option.Config.BPFIPv4OverIPv6ExternalDecapMark)
 		}
 		if option.Config.NodePortNat46X64 {
 			cDefinesMap["ENABLE_NAT_46X64"] = "1"

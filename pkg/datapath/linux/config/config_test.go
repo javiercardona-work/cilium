@@ -167,6 +167,43 @@ func TestPrivilegedWriteNodeConfigFallsBackToCiliumInternalIPv4ForDirectRouting(
 	)
 }
 
+func TestPrivilegedWriteNodeConfigBPFIPv4OverIPv6ExternalDecapMark(t *testing.T) {
+	testutils.PrivilegedTest(t)
+
+	oldEnableBPFIPv4OverIPv6 := option.Config.EnableBPFIPv4OverIPv6
+	oldExternalDecapMark := option.Config.BPFIPv4OverIPv6ExternalDecapMark
+	defer func() {
+		option.Config.EnableBPFIPv4OverIPv6 = oldEnableBPFIPv4OverIPv6
+		option.Config.BPFIPv4OverIPv6ExternalDecapMark = oldExternalDecapMark
+	}()
+
+	option.Config.EnableBPFIPv4OverIPv6 = true
+	option.Config.BPFIPv4OverIPv6ExternalDecapMark = 0xCAFE
+
+	ciliumNet := createMainLink(defaults.SecondHostDevice, t)
+	defer netlink.LinkDel(ciliumNet)
+	ciliumHost := createMainLink(defaults.HostDevice, t)
+	defer netlink.LinkDel(ciliumHost)
+
+	cfg, err := NewHeaderfileWriter(WriterParams{
+		NodeAddressing: fakeTypes.NewNodeAddressing(),
+		Sysctl:         sysctl.NewDirectSysctl(afero.NewOsFs(), "/proc"),
+		NodeMap:        fake.NewFakeNodeMapV2(),
+		KPRConfig:      kpr.KPRConfig{EnableNodePort: true},
+	})
+	require.NoError(t, err)
+
+	var buffer bytes.Buffer
+	require.NoError(t, cfg.WriteNodeConfig(&buffer, &dummyNodeCfg))
+	require.Contains(t, buffer.String(), "#define ENABLE_BPF_IPV4_OVER_IPV6 1\n")
+	require.Contains(t, buffer.String(), fmt.Sprintf("#define BPF_IPV4_OVER_IPV6_EXTERNAL_DECAP_MARK %d\n", option.Config.BPFIPv4OverIPv6ExternalDecapMark))
+
+	option.Config.BPFIPv4OverIPv6ExternalDecapMark = 0
+	buffer.Reset()
+	require.NoError(t, cfg.WriteNodeConfig(&buffer, &dummyNodeCfg))
+	require.Contains(t, buffer.String(), "#define BPF_IPV4_OVER_IPV6_EXTERNAL_DECAP_MARK 0\n")
+}
+
 func TestPrivilegedWriteNetdevConfig(t *testing.T) {
 	setupConfigSuite(t)
 	writeConfig(t, "netdev", func(w io.Writer, dp datapath.ConfigWriter) error {
