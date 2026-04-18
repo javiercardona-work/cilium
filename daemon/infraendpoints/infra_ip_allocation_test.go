@@ -4,6 +4,7 @@
 package infraendpoints
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -24,6 +25,7 @@ import (
 	ipamOption "github.com/cilium/cilium/pkg/ipam/option"
 	"github.com/cilium/cilium/pkg/mac"
 	"github.com/cilium/cilium/pkg/node"
+	nodefake "github.com/cilium/cilium/pkg/node/fake"
 	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/testutils"
 	"github.com/cilium/cilium/pkg/testutils/netns"
@@ -104,7 +106,10 @@ func TestCoalesceCIDRs(t *testing.T) {
 }
 
 type mockIPAllocator struct {
-	allocCIDR *cidr.CIDR
+	allocCIDR  *cidr.CIDR
+	nextFamily ipam.Family
+	nextResult *ipam.AllocationResult
+	excluded   []netip.Addr
 }
 
 func (m *mockIPAllocator) AllocateIPWithoutSyncUpstream(ip netip.Addr, owner string, pool ipam.Pool) (*ipam.AllocationResult, error) {
@@ -115,10 +120,13 @@ func (m *mockIPAllocator) AllocateIPWithoutSyncUpstream(ip netip.Addr, owner str
 }
 
 func (m *mockIPAllocator) AllocateNextFamilyWithoutSyncUpstream(family ipam.Family, owner string, pool ipam.Pool) (result *ipam.AllocationResult, err error) {
-	return nil, nil
+	m.nextFamily = family
+	return m.nextResult, nil
 }
 
-func (m *mockIPAllocator) ExcludeIP(ip netip.Addr, owner string, pool ipam.Pool) {}
+func (m *mockIPAllocator) ExcludeIP(ip netip.Addr, owner string, pool ipam.Pool) {
+	m.excluded = append(m.excluded, ip)
+}
 
 func (m *mockIPAllocator) ReleaseIP(ip netip.Addr, pool ipam.Pool) error {
 	return nil
@@ -174,6 +182,39 @@ func TestDaemon_reallocateDatapathIPs(t *testing.T) {
 	result = infraIPAllocator.reallocateOldRouterIPs(fromK8s, invalidFromFS)
 	assert.NotNil(t, result)
 	assert.Equal(t, result.IP, fromK8sAddr)
+}
+
+type nilPrimaryExternalFamily struct {
+	node.AddressingFamily
+}
+
+func (nilPrimaryExternalFamily) PrimaryExternal() net.IP {
+	return nil
+}
+
+func TestAllocateRouterIPv4WithoutPrimaryExternal(t *testing.T) {
+	addressing := nodefake.NewAddressing()
+	want := netip.MustParseAddr("1.1.1.3")
+	allocator := &mockIPAllocator{
+		allocCIDR:  cidr.MustParseCIDR("1.1.1.0/24"),
+		nextResult: &ipam.AllocationResult{IP: want},
+	}
+	infraIPAllocator := &infraIPAllocator{
+		logger:       hivetest.Logger(t),
+		daemonConfig: &option.DaemonConfig{},
+		ipAllocator:  allocator,
+	}
+
+	got, err := infraIPAllocator.allocateRouterIPv4(
+		context.Background(),
+		nilPrimaryExternalFamily{addressing.IPv4()},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.True(t, got.Equal(net.IP(want.AsSlice())))
+	assert.Equal(t, ipam.IPv4, allocator.nextFamily)
+	assert.Empty(t, allocator.excluded)
 }
 
 func TestPrivilegedRemoveOldRouterState(t *testing.T) {

@@ -129,7 +129,7 @@ func (r *infraIPAllocator) allocateRouterIPv4(ctx context.Context, family node.A
 		return routerIP, nil
 	}
 
-	return r.reallocateRouterIPs(ctx, family, fromK8s, fromFS)
+	return r.reallocateRouterIPs(ctx, family, ipam.IPv4, fromK8s, fromFS)
 }
 
 func (r *infraIPAllocator) allocateRouterIPv6(ctx context.Context, family node.AddressingFamily, fromK8s, fromFS net.IP) (net.IP, error) {
@@ -144,7 +144,7 @@ func (r *infraIPAllocator) allocateRouterIPv6(ctx context.Context, family node.A
 		return routerIP, nil
 	}
 
-	return r.reallocateRouterIPs(ctx, family, fromK8s, fromFS)
+	return r.reallocateRouterIPs(ctx, family, ipam.IPv6, fromK8s, fromFS)
 }
 
 // Coalesce CIDRS when allocating the DatapathIPs and healthIPs. GH #18868
@@ -253,9 +253,11 @@ func (r *infraIPAllocator) waitForENI(ctx context.Context, macAddr string) error
 	return wait.ExponentialBackoffWithContext(ctx, bo, findENIByMAC)
 }
 
-func (r *infraIPAllocator) reallocateRouterIPs(ctx context.Context, family node.AddressingFamily, fromK8s, fromFS net.IP) (routerIP net.IP, err error) {
+func (r *infraIPAllocator) reallocateRouterIPs(ctx context.Context, family node.AddressingFamily, ipFamily ipam.Family, fromK8s, fromFS net.IP) (routerIP net.IP, err error) {
 	// Avoid allocating external IP
-	r.ipAllocator.ExcludeIP(iputil.AddrFromIP(family.PrimaryExternal()), "node-ip", ipam.PoolDefault())
+	if nodeIP := family.PrimaryExternal(); nodeIP != nil {
+		r.ipAllocator.ExcludeIP(iputil.AddrFromIP(nodeIP), "node-ip", ipam.PoolDefault())
+	}
 
 	// (Re-)allocate the router IP. If not possible, allocate a fresh IP.
 	// In that case, the old router IP needs to be removed from cilium_host
@@ -264,18 +266,14 @@ func (r *infraIPAllocator) reallocateRouterIPs(ctx context.Context, family node.
 	// have been regenerated.
 	result := r.reallocateOldRouterIPs(fromK8s, fromFS)
 	if result == nil {
-		primaryAddr, _ := netip.AddrFromSlice(family.PrimaryExternal())
-		family := ipam.DeriveFamily(primaryAddr.Unmap())
-		result, err = r.ipAllocator.AllocateNextFamilyWithoutSyncUpstream(family, "router", ipam.PoolDefault())
+		result, err = r.ipAllocator.AllocateNextFamilyWithoutSyncUpstream(ipFamily, "router", ipam.PoolDefault())
 		if err != nil {
-			return nil, fmt.Errorf("unable to allocate router IP for family %s: %w", family, err)
+			return nil, fmt.Errorf("unable to allocate router IP for family %s: %w", ipFamily, err)
 		}
 	}
 
-	primaryAddr, _ := netip.AddrFromSlice(family.PrimaryExternal())
-	ipfamily := ipam.DeriveFamily(primaryAddr.Unmap())
-	masq := (ipfamily == ipam.IPv4 && r.daemonConfig.EnableIPv4Masquerade) ||
-		(ipfamily == ipam.IPv6 && r.daemonConfig.EnableIPv6Masquerade)
+	masq := (ipFamily == ipam.IPv4 && r.daemonConfig.EnableIPv4Masquerade) ||
+		(ipFamily == ipam.IPv6 && r.daemonConfig.EnableIPv6Masquerade)
 
 	// Coalescing multiple CIDRs. GH #18868
 	if masq &&
