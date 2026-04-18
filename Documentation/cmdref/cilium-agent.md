@@ -46,6 +46,7 @@ cilium-agent [flags]
       --bpf-events-policy-verdict-enabled                         Expose 'policy verdict' events for Cilium monitor and/or Hubble (default true)
       --bpf-events-trace-enabled                                  Expose 'trace' events for Cilium monitor and/or Hubble (default true)
       --bpf-fragments-map-max int                                 Maximum number of entries in fragments tracking map (default 8192)
+      --bpf-ipv4-over-ipv6-external-decap-mark uint32             Treat IPv4 netdev ingress packets with this skb mark as already-decapsulated IPv4-over-IPv6 tunnel traffic; 0 disables the compatibility path
       --bpf-lb-acceleration string                                BPF load balancing acceleration via XDP ("native", "disabled") (default "disabled")
       --bpf-lb-algorithm string                                   BPF load balancing algorithm ("random", "maglev") (default "random")
       --bpf-lb-algorithm-annotation                               Enable service-level annotation for configuring BPF load balancing algorithm
