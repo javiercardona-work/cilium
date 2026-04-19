@@ -6,12 +6,26 @@
 #include "pktgen.h"
 
 #define ENABLE_IPV4
+#define ENABLE_IPV6
 #define ENABLE_NODEPORT
 #define ENABLE_BPF_IPV4_OVER_IPV6
 #define BPF_IPV4_OVER_IPV6_EXTERNAL_DECAP_MARK 0xbeef
 
 #include "bpf_host.c"
 #include "lib/endpoint.h"
+
+#define FROM_NETDEV 0
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+	__uint(key_size, sizeof(__u32));
+	__uint(max_entries, 1);
+	__array(values, int());
+} entry_call_map __section(".maps") = {
+	.values = {
+		[FROM_NETDEV] = &cil_from_netdev,
+	},
+};
 
 #define SRC_MAC mac_one
 #define ROUTER_MAC mac_three
@@ -46,6 +60,48 @@ static __always_inline int build_packet(struct __ctx_buff *ctx)
 	return TEST_PASS;
 }
 
+static __always_inline int build_ipip_packet(struct __ctx_buff *ctx)
+{
+	struct pktgen builder;
+	struct ipv6hdr *outer;
+	struct iphdr *inner;
+	struct tcphdr *l4;
+	void *data;
+
+	pktgen__init(&builder, ctx);
+
+	outer = pktgen__push_ipv6_packet(&builder,
+					 (__u8 *)SRC_MAC,
+					 (__u8 *)ROUTER_MAC,
+					 (__u8 *)v6_ext_node_one,
+					 (__u8 *)v6_node_one);
+	if (!outer)
+		return TEST_ERROR;
+
+	outer->nexthdr = IPPROTO_IPIP;
+
+	inner = pktgen__push_default_iphdr(&builder);
+	if (!inner)
+		return TEST_ERROR;
+
+	inner->saddr = SRC_IPV4;
+	inner->daddr = DST_IPV4;
+
+	l4 = pktgen__push_default_tcphdr(&builder);
+	if (!l4)
+		return TEST_ERROR;
+
+	l4->source = SRC_PORT;
+	l4->dest = DST_PORT;
+
+	data = pktgen__push_data(&builder, default_data, sizeof(default_data));
+	if (!data)
+		return TEST_ERROR;
+
+	pktgen__finish(&builder);
+	return TEST_PASS;
+}
+
 static __always_inline int run_netdev_ipv4(struct __ctx_buff *ctx, bool marked)
 {
 	void *data, *data_end;
@@ -68,7 +124,7 @@ static __always_inline int run_netdev_ipv4(struct __ctx_buff *ctx, bool marked)
 		return TEST_ERROR;
 
 	if (ipv4_over_ipv6_external_decap_marked(ctx))
-		ipv4_over_ipv6_mark_external_decap(ctx);
+		ipv4_over_ipv6_mark_decap(ctx);
 
 	identity = resolve_srcid_ipv4(ctx, ip4, UNKNOWN_ID, &ipcache_srcid, false);
 	ctx_store_meta(ctx, CB_SRC_LABEL, identity);
@@ -78,6 +134,20 @@ static __always_inline int run_netdev_ipv4(struct __ctx_buff *ctx, bool marked)
 		return ret;
 
 	return handle_ipv4_cont(ctx, identity, false, &ext_err);
+}
+
+static __always_inline int run_netdev_ipip(struct __ctx_buff *ctx)
+{
+	endpoint_v4_add_entry(DST_IPV4, 0, 100, 0, 0, 0,
+			      (__u8 *)POD_MAC, (__u8 *)ROUTER_MAC);
+
+	bpf_clear_meta(ctx);
+	ctx_skip_nodeport_clear(ctx);
+	ctx_store_meta(ctx, CB_FROM_TUNNEL, 0);
+	ctx->mark = 0;
+
+	tail_call_static(ctx, entry_call_map, FROM_NETDEV);
+	return TEST_ERROR;
 }
 
 PKTGEN("tc", "01_unmarked_ipv4")
@@ -234,6 +304,85 @@ int external_decap_marked_check(struct __ctx_buff *ctx)
 
 	if (ctx_load_meta(ctx, CB_CLUSTER_ID_INGRESS) != 0)
 		test_fatal("unexpected cluster-id metadata");
+
+	test_finish();
+}
+
+PKTGEN("tc", "03_ipip6_local_delivery")
+int ipip6_local_delivery_pktgen(struct __ctx_buff *ctx)
+{
+	return build_ipip_packet(ctx);
+}
+
+SETUP("tc", "03_ipip6_local_delivery")
+int ipip6_local_delivery_setup(struct __ctx_buff *ctx)
+{
+	return run_netdev_ipip(ctx);
+}
+
+CHECK("tc", "03_ipip6_local_delivery")
+int ipip6_local_delivery_check(struct __ctx_buff *ctx)
+{
+	void *data, *data_end;
+	__s32 *status_code;
+	struct tcphdr *l4;
+	struct ethhdr *l2;
+	struct iphdr *l3;
+
+	test_init();
+
+	data = (void *)(long)ctx_data(ctx);
+	data_end = (void *)(long)ctx->data_end;
+
+	if (data + sizeof(__u32) > data_end)
+		test_fatal("status code out of bounds");
+
+	status_code = data;
+	if (*status_code != DROP_EP_NOT_READY)
+		test_fatal("unexpected status code %d, want %d",
+			   *status_code, DROP_EP_NOT_READY);
+
+	l2 = data + sizeof(__u32);
+	if ((void *)l2 + sizeof(struct ethhdr) > data_end)
+		test_fatal("l2 out of bounds");
+
+	l3 = (void *)l2 + sizeof(struct ethhdr);
+	if ((void *)l3 + sizeof(struct iphdr) > data_end)
+		test_fatal("l3 out of bounds");
+
+	l4 = (void *)l3 + sizeof(struct iphdr);
+	if ((void *)l4 + sizeof(struct tcphdr) > data_end)
+		test_fatal("l4 out of bounds");
+
+	if (memcmp(l2->h_source, (__u8 *)ROUTER_MAC, ETH_ALEN) != 0)
+		test_fatal("unexpected source MAC");
+
+	if (memcmp(l2->h_dest, (__u8 *)POD_MAC, ETH_ALEN) != 0)
+		test_fatal("unexpected destination MAC");
+
+	if (l2->h_proto != bpf_htons(ETH_P_IP))
+		test_fatal("unexpected l2 protocol");
+
+	if (l3->saddr != SRC_IPV4)
+		test_fatal("unexpected source IPv4");
+
+	if (l3->daddr != DST_IPV4)
+		test_fatal("unexpected destination IPv4");
+
+	if (l4->source != SRC_PORT)
+		test_fatal("unexpected TCP source port");
+
+	if (l4->dest != DST_PORT)
+		test_fatal("unexpected TCP destination port");
+
+	if (ctx_load_meta(ctx, CB_DELIVERY_REDIRECT) != 1)
+		test_fatal("expected delivery redirect metadata");
+
+	if (ctx_load_meta(ctx, CB_FROM_TUNNEL) != 1)
+		test_fatal("expected from-tunnel metadata");
+
+	if (ctx_load_meta(ctx, CB_FROM_HOST) != 0)
+		test_fatal("unexpected from-host metadata");
 
 	test_finish();
 }

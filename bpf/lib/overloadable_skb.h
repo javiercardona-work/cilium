@@ -184,6 +184,21 @@ ctx_skip_nodeport(struct __sk_buff *ctx __maybe_unused)
 #endif
 }
 
+static __always_inline __maybe_unused void
+ctx_from_tunnel_set(struct __sk_buff *ctx)
+{
+	ctx->tc_index |= TC_INDEX_F_FROM_TUNNEL;
+}
+
+static __always_inline __maybe_unused bool
+ctx_from_tunnel(struct __sk_buff *ctx)
+{
+	volatile __u32 tc_index = ctx->tc_index;
+
+	ctx->tc_index &= ~TC_INDEX_F_FROM_TUNNEL;
+	return tc_index & TC_INDEX_F_FROM_TUNNEL;
+}
+
 #ifdef ENABLE_HOST_FIREWALL
 static __always_inline void
 ctx_skip_host_fw_set(struct __sk_buff *ctx)

@@ -115,6 +115,17 @@ ctx_skip_nodeport(struct xdp_md *ctx __maybe_unused)
 #endif
 }
 
+static __always_inline __maybe_unused void
+ctx_from_tunnel_set(struct xdp_md *ctx __maybe_unused)
+{
+}
+
+static __always_inline __maybe_unused bool
+ctx_from_tunnel(struct xdp_md *ctx __maybe_unused)
+{
+	return false;
+}
+
 static __always_inline __maybe_unused __u32
 ctx_get_xfer(struct xdp_md *ctx __maybe_unused, __u32 off __maybe_unused)
 {
