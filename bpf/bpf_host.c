@@ -104,10 +104,13 @@ ipv4_over_ipv6_external_decap_marked(const struct __ctx_buff *ctx)
 }
 
 static __always_inline void
-ipv4_over_ipv6_mark_external_decap(struct __ctx_buff *ctx)
+ipv4_over_ipv6_mark_decap(struct __ctx_buff *ctx)
 {
 	ctx_skip_nodeport_set(ctx);
-	ctx_store_meta(ctx, CB_FROM_TUNNEL, 1);
+	/* Preserve decap state across the IPv4 recirculation tail call even when
+	 * the build has no encapsulation device metadata path.
+	 */
+	ctx_from_tunnel_set(ctx);
 }
 
 /* Strip the outer IPv6 header from the pure BPF ipip6 pod-forwarding path and
@@ -841,9 +844,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 
-#ifdef HAVE_ENCAP
-	from_tunnel = ctx_load_meta(ctx, CB_FROM_TUNNEL);
-#endif
+	from_tunnel = ctx_from_tunnel(ctx);
 
 #ifdef ENABLE_BPF_IPV4_OVER_IPV6
 	if (!from_host && !from_tunnel && ipv4_over_ipv6_external_decap_marked(ctx))
@@ -1243,46 +1244,17 @@ do_netdev(struct __ctx_buff *ctx, __be16 proto, __u32 identity,
 
 #ifdef ENABLE_BPF_IPV4_OVER_IPV6
 		if (!from_host && ip6->nexthdr == IPPROTO_IPIP) {
-			const struct endpoint_info *ep;
-
 			ret = decap_ipv4_over_ipv6(ctx, &ext_err);
 			if (ret != CTX_ACT_OK)
 				return send_drop_notify_error_ext(ctx, identity, ret, ext_err,
 							      METRIC_INGRESS);
 
-			if (!revalidate_data_pull(ctx, &data, &data_end, &ip4)) {
-				ext_err = 10;
-				return send_drop_notify_error_ext(ctx, identity, DROP_INVALID,
-							      ext_err, METRIC_INGRESS);
-			}
-
-			identity = resolve_srcid_ipv4(ctx, ip4, identity, &ipcache_srcid,
-					      false);
-			ctx_store_meta(ctx, CB_SRC_LABEL, identity);
-
-			send_trace_notify(ctx, obs_point, ipcache_srcid, UNKNOWN_ID,
-					  TRACE_EP_ID_UNKNOWN, ctx->ingress_ifindex,
-					  trace.reason, trace.monitor,
-					  bpf_htons(ETH_P_IP));
-
-			ep = lookup_ip4_endpoint(ip4);
-			if (ep && !(ep->flags & ENDPOINT_MASK_HOST_DELIVERY)) {
-				ret = ipv4_local_delivery(ctx, ETH_HLEN, identity,
-							 MARK_MAGIC_IDENTITY, ip4, ep,
-							 METRIC_INGRESS, false, true, 0);
-				if (IS_ERR(ret))
-					return send_drop_notify_error_ext(ctx, identity, ret, 0,
-									  METRIC_INGRESS);
-				return ret;
-			}
-
-			/* This is an already-decapsulated pod packet, not a fresh
-			 * external IPv4 ingress packet. Skip the NodePort/NAT46
-			 * front door on recirculation so the regular IPv4 local
-			 * delivery logic can consume it.
+			/* Re-enter the regular IPv4 netdev path so it can populate
+			 * the tail-call buffer before local delivery. This is
+			 * required when host routing is disabled and ingress policy
+			 * is enforced via the endpoint tail call.
 			 */
-			ctx_skip_nodeport_set(ctx);
-			ctx_store_meta(ctx, CB_FROM_TUNNEL, 1);
+			ipv4_over_ipv6_mark_decap(ctx);
 			ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_FROM_NETDEV,
 						 &ext_err);
 			return send_drop_notify_error_with_exitcode_ext(ctx, identity, ret,
@@ -1387,7 +1359,7 @@ do_netdev(struct __ctx_buff *ctx, __be16 proto, __u32 identity,
 
 #ifdef ENABLE_BPF_IPV4_OVER_IPV6
 		if (!from_host && ipv4_over_ipv6_external_decap_marked(ctx))
-			ipv4_over_ipv6_mark_external_decap(ctx);
+			ipv4_over_ipv6_mark_decap(ctx);
 #endif
 
 		identity = resolve_srcid_ipv4(ctx, ip4, identity, &ipcache_srcid);
@@ -1498,7 +1470,6 @@ int cil_from_netdev(struct __ctx_buff *ctx)
 	}
 
 	ctx_skip_nodeport_clear(ctx);
-	ctx_store_meta(ctx, CB_FROM_TUNNEL, 0);
 
 #ifdef ENABLE_NODEPORT_ACCELERATION
 	if (flags & XFER_PKT_NO_SVC)
