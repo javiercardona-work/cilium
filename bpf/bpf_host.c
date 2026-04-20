@@ -56,6 +56,63 @@
 #include "lib/l2_responder.h"
 #include "lib/vtep.h"
 
+/* IP bypass: hash map of IPv6 addresses that should skip all Cilium
+ * BPF processing. Populated from userspace with IPs that don't need
+ * network policy enforcement.
+ * Keyed by union v6addr (16 bytes), value is a dummy __u8.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, union v6addr);
+	__type(value, __u8);
+	__uint(max_entries, 256);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} cilium_bypass_ips __section_maps_btf;
+
+/* Check if an IPv6 packet's address is in the bypass map.
+ * For egress (to-netdev): checks source address.
+ * For ingress (from-netdev): checks destination address and ensures the
+ *   destination port is NOT in the NodePort range (30000-32767), so that
+ *   Cilium can still handle NodePort DNAT.
+ * Returns true if the packet should bypass Cilium processing.
+ */
+static __always_inline bool
+ip_bypass_check(struct __ctx_buff *ctx, bool is_egress)
+{
+	union v6addr addr;
+	int ret;
+
+	if (is_egress)
+		ret = ipv6_load_saddr(ctx, ETH_HLEN, &addr);
+	else
+		ret = ipv6_load_daddr(ctx, ETH_HLEN, &addr);
+
+	if (ret < 0)
+		return false;
+
+	if (!map_lookup_elem(&cilium_bypass_ips, &addr))
+		return false;
+
+	/* On ingress, let NodePort traffic through to Cilium for DNAT. */
+	if (!is_egress) {
+		__u8 nexthdr = 0;
+		int l4_off;
+
+		l4_off = ipv6_hdrlen(ctx, &nexthdr);
+		if (l4_off >= 0 && (nexthdr == IPPROTO_TCP ||
+				    nexthdr == IPPROTO_UDP)) {
+			__be16 dport = 0;
+
+			l4_load_port(ctx, ETH_HLEN + l4_off + 2, &dport);
+			if (bpf_ntohs(dport) >= NODEPORT_PORT_MIN &&
+			    bpf_ntohs(dport) <= NODEPORT_PORT_MAX)
+				return false;
+		}
+	}
+
+	return true;
+}
+
  #define host_egress_policy_hook(ctx, src_sec_identity, ext_err) CTX_ACT_OK
  #define host_wg_encrypt_hook(ctx, proto, src_sec_identity)			\
 	 wg_maybe_redirect_to_encrypt(ctx, proto, src_sec_identity)
@@ -1382,6 +1439,11 @@ int cil_from_netdev(struct __ctx_buff *ctx)
 #endif /* ENABLE_HOST_FIREWALL */
 	}
 
+	/* Bypass Cilium for IPs in the bypass map (ingress: check dest IP) */
+	if (proto == bpf_htons(ETH_P_IPV6) &&
+	    ip_bypass_check(ctx, false))
+		return CTX_ACT_OK;
+
 #ifdef ENABLE_IPSEC
 	/* If the packet needs decryption, we want to send it straight to the
 	 * stack. There's no need to run service handling logic, host firewall,
@@ -1527,6 +1589,11 @@ int cil_to_netdev(struct __ctx_buff *ctx)
 
 	/* Load the ethertype just once: */
 	validate_ethertype(ctx, &proto);
+
+	/* Bypass Cilium for IPs in the bypass map (egress: check source IP) */
+	if (proto == bpf_htons(ETH_P_IPV6) &&
+	    ip_bypass_check(ctx, true))
+		return CTX_ACT_OK;
 
 #ifdef ENABLE_HOST_FIREWALL
 	/* This was initially added for Egress GW. There it's no longer needed,
