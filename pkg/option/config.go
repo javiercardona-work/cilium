@@ -132,6 +132,10 @@ const (
 	// EnableTracing enables tracing mode in the agent.
 	EnableTracing = "enable-tracing"
 
+	// EnableIPBypass is the name of the option to enable the IP bypass map
+	// for skipping Cilium BPF processing on selected IPs.
+	EnableIPBypass = "enable-ip-bypass"
+
 	// EnableIPIPTermination is the name of the option to enable IPIP termination
 	EnableIPIPTermination = "enable-ipip-termination"
 
@@ -1524,6 +1528,7 @@ type DaemonConfig struct {
 	EnableSocketLBPeer            bool
 	EnablePolicy                  string
 	EnableTracing                 bool
+	EnableIPBypass                bool
 	EnableIPIPTermination         bool
 	EnableUnreachableRoutes       bool
 	FixedIdentityMapping          map[string]string
@@ -2659,6 +2664,7 @@ func (c *DaemonConfig) Populate(logger *slog.Logger, vp *viper.Viper) {
 	c.EnablePolicy = strings.ToLower(vp.GetString(EnablePolicy))
 	c.EnableL7Proxy = vp.GetBool(EnableL7Proxy)
 	c.EnableTracing = vp.GetBool(EnableTracing)
+	c.EnableIPBypass = vp.GetBool(EnableIPBypass)
 	c.EnableIPIPTermination = vp.GetBool(EnableIPIPTermination)
 	c.EnableUnreachableRoutes = vp.GetBool(EnableUnreachableRoutes)
 	c.EnableHostLegacyRouting = vp.GetBool(EnableHostLegacyRouting)

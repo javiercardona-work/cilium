@@ -264,6 +264,9 @@ func InitGlobalFlags(logger *slog.Logger, cmd *cobra.Command, vp *viper.Viper) {
 	flags.Uint32(option.BPFIPv4OverIPv6ExternalDecapMark, 0, "Treat IPv4 netdev ingress packets with this skb mark as already-decapsulated IPv4-over-IPv6 tunnel traffic; 0 disables the compatibility path")
 	option.BindEnv(vp, option.BPFIPv4OverIPv6ExternalDecapMark)
 
+	flags.Bool(option.EnableIPBypass, false, "Enable IP bypass map to skip Cilium BPF processing for selected IPs")
+	option.BindEnv(vp, option.EnableIPBypass)
+
 	flags.Bool(option.EnableIPIPTermination, false, "Enable plain IPIP/IP6IP6 termination")
 	option.BindEnv(vp, option.EnableIPIPTermination)
 

@@ -2796,6 +2796,14 @@
      - Enable pure BPF IPv4-over-IPv6 (ipip6) pod forwarding for remote pod IPv4 traffic on IPv6-only underlays. Requires IPv4, IPv6, and native routing mode.
      - bool
      - ``false``
+   * - :spelling:ignore:`ipBypass`
+     - Configure IP bypass map to skip Cilium BPF processing for selected IPs.
+     - object
+     - ``{"enabled":false}``
+   * - :spelling:ignore:`ipBypass.enabled`
+     - Enable the IP bypass map. When enabled, IPv6 addresses added to the cilium_bypass_ips BPF map will skip all Cilium datapath processing.
+     - bool
+     - ``false``
    * - :spelling:ignore:`nat46x64Gateway`
      - Configure standalone NAT46/NAT64 gateway
      - object

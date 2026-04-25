@@ -162,6 +162,7 @@ cilium-agent [flags]
       --enable-local-redirect-policy                              Enable Local Redirect Policy
       --enable-masquerade-to-route-source                         Masquerade packets to the source IP provided from the routing layer rather than interface address
       --enable-monitor                                            Enable the monitor unix domain socket server (default true)
+      --enable-ip-bypass                                           Enable IP bypass map to skip Cilium BPF processing for selected IPs
       --enable-nat46x64-gateway                                   Enable NAT46 and NAT64 gateway
       --bpf-ipv4-over-ipv6-external-decap-mark uint32             Treat IPv4 netdev ingress packets with this skb mark as already-decapsulated IPv4-over-IPv6 tunnel traffic; 0 disables the compatibility path
       --enable-bpf-ipv4-over-ipv6                                 Enable pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays

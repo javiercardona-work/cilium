@@ -390,6 +390,9 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *datapath.LocalNodeC
 		if option.Config.NodePortNat46X64 {
 			cDefinesMap["ENABLE_NAT_46X64"] = "1"
 		}
+		if option.Config.EnableIPBypass {
+			cDefinesMap["ENABLE_IP_BYPASS"] = "1"
+		}
 
 		// --- WARNING: THIS CONFIGURATION METHOD IS DEPRECATED, SEE FUNCTION DOC ---
 
