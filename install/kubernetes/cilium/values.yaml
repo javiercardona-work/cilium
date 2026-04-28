@@ -460,6 +460,11 @@ bpfIPv4OverIPv6:
   # as already-decapsulated IPv4-over-IPv6 tunnel traffic. Set to 0 to disable
   # the compatibility path.
   externalDecapMark: 0
+# -- Configure IP bypass map to skip Cilium BPF processing for selected IPs.
+ipBypass:
+  # -- Enable the IP bypass map. When enabled, IPv6 addresses added to the
+  # cilium_bypass_ips BPF map will skip all Cilium datapath processing.
+  enabled: false
 # -- Configure standalone NAT46/NAT64 gateway
 nat46x64Gateway:
   # -- Enable RFC6052-prefixed translation
@@ -2169,7 +2174,7 @@ maglev: {}
 # type: [null, boolean]
 # @schema
 # -- (bool) Enables masquerading of IPv4 traffic leaving the node from endpoints.
-# @default -- `true` unless ipam eni mode is active 
+# @default -- `true` unless ipam eni mode is active
 enableIPv4Masquerade: ~
 # -- Enables masquerading of IPv6 traffic leaving the node from endpoints.
 enableIPv6Masquerade: true

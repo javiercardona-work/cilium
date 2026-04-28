@@ -754,6 +754,10 @@ data:
   bpf-ipv4-over-ipv6-external-decap-mark: {{ .Values.bpfIPv4OverIPv6.externalDecapMark | quote }}
 {{- end }}
 
+{{- if .Values.ipBypass.enabled }}
+  enable-ip-bypass: {{ .Values.ipBypass.enabled | quote }}
+{{- end }}
+
 {{- if .Values.nat46x64Gateway.enabled }}
   enable-nat46x64-gateway: {{ .Values.nat46x64Gateway.enabled | quote }}
 {{- end }}

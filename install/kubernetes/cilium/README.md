@@ -750,6 +750,8 @@ contributors across the globe, there is almost always someone available to help.
 | bpfIPv4OverIPv6 | object | `{"enabled":false,"externalDecapMark":0}` | Configure pure BPF IPv4-over-IPv6 pod forwarding on IPv6-only underlays. |
 | bpfIPv4OverIPv6.enabled | bool | `false` | Enable pure BPF IPv4-over-IPv6 (`ipip6`) pod forwarding for remote pod IPv4 traffic on IPv6-only underlays. Requires IPv4, IPv6, and native routing mode. |
 | bpfIPv4OverIPv6.externalDecapMark | int | `0` | Treat IPv4 packets arriving on native-device ingress with this skb mark as already-decapsulated IPv4-over-IPv6 tunnel traffic. Set to 0 to disable the compatibility path. |
+| ipBypass | object | `{"enabled":false}` | Configure IP bypass map to skip Cilium BPF processing for selected IPs. |
+| ipBypass.enabled | bool | `false` | Enable the IP bypass map. When enabled, IPv6 addresses added to the `cilium_bypass_ips` BPF map will skip all Cilium datapath processing. |
 | nat46x64Gateway | object | `{"enabled":false}` | Configure standalone NAT46/NAT64 gateway |
 | nat46x64Gateway.enabled | bool | `false` | Enable RFC6052-prefixed translation |
 | nodeIPAM.enabled | bool | `false` | Configure Node IPAM ref: https://docs.cilium.io/en/stable/network/node-ipam/ |

@@ -4253,6 +4253,14 @@
       },
       "type": "object"
     },
+    "ipBypass": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "nat46x64Gateway": {
       "properties": {
         "enabled": {

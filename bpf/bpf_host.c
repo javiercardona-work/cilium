@@ -55,6 +55,9 @@
 #include "lib/wireguard.h"
 #include "lib/l2_responder.h"
 #include "lib/vtep.h"
+#include "lib/ip_bypass.h"
+
+/* ip_bypass_check() and cilium_bypass_ips map are defined in lib/ip_bypass.h */
 
  #define host_egress_policy_hook(ctx, src_sec_identity, ext_err) CTX_ACT_OK
  #define host_wg_encrypt_hook(ctx, proto, src_sec_identity)			\
@@ -1382,6 +1385,12 @@ int cil_from_netdev(struct __ctx_buff *ctx)
 #endif /* ENABLE_HOST_FIREWALL */
 	}
 
+#ifdef ENABLE_IP_BYPASS
+	if (proto == bpf_htons(ETH_P_IPV6) &&
+	    ip_bypass_check(ctx, false))
+		return CTX_ACT_OK;
+#endif /* ENABLE_IP_BYPASS */
+
 #ifdef ENABLE_IPSEC
 	/* If the packet needs decryption, we want to send it straight to the
 	 * stack. There's no need to run service handling logic, host firewall,
@@ -1527,6 +1536,12 @@ int cil_to_netdev(struct __ctx_buff *ctx)
 
 	/* Load the ethertype just once: */
 	validate_ethertype(ctx, &proto);
+
+#ifdef ENABLE_IP_BYPASS
+	if (proto == bpf_htons(ETH_P_IPV6) &&
+	    ip_bypass_check(ctx, true))
+		return CTX_ACT_OK;
+#endif /* ENABLE_IP_BYPASS */
 
 #ifdef ENABLE_HOST_FIREWALL
 	/* This was initially added for Egress GW. There it's no longer needed,
