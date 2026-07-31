@@ -195,7 +195,17 @@ var HaveBPFJIT = sync.OnceValue(func() error {
 	if err != nil {
 		return fmt.Errorf("get prog info: %w", err)
 	}
-	if _, err := info.JitedSize(); err != nil && !errors.Is(err, ebpf.ErrRestrictedKernel) {
+	// JitedSize() reports the program's JITed size read via BPF_OBJ_GET_INFO_BY_FD.
+	// In a restricted or user-namespaced environment (as when Cilium runs with a
+	// BPF token instead of full init-namespace capabilities), the kernel hides
+	// the JITed address/size from the unprivileged process (kptr_restrict),
+	// returning a zero jited size which the library surfaces as ErrNotSupported,
+	// even though the BPF JIT is present and active. Tolerate that here in
+	// addition to ErrRestrictedKernel; the datapath program load itself would
+	// fail later if the JIT were genuinely unavailable.
+	if _, err := info.JitedSize(); err != nil &&
+		!errors.Is(err, ebpf.ErrRestrictedKernel) &&
+		!errors.Is(err, ebpf.ErrNotSupported) {
 		return fmt.Errorf("get JITed prog size: %w", err)
 	}
 
