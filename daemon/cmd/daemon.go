@@ -75,14 +75,18 @@ func initAndValidateDaemonConfig(params daemonConfigParams) error {
 		return fmt.Errorf("unable to initialize kube-proxy replacement options: %w", err)
 	}
 
-	// NodePort/BPF masquerade features require iptables rules to be installed
-	// so locally generated traffic is marked appropriately.
+	// BPF masquerade requires iptables rules to be installed so locally
+	// generated traffic is marked appropriately.
 	//
-	// The NodePort code must identify locally generated traffic to avoid
-	// NAT port allocation conflicts.
-	if (params.KPRConfig.KubeProxyReplacement || params.DaemonConfig.EnableBPFMasquerade) && !params.DaemonConfig.InstallIptRules {
-		return fmt.Errorf("kube-proxy replacement (--%s) or BPF masquerade (--%s) requires iptables rules (--%s=\"true\")",
-			option.KubeProxyReplacement, option.EnableBPFMasquerade, option.InstallIptRules)
+	// Note: upstream also requires iptables for KubeProxyReplacement so the
+	// NodePort code can identify locally generated traffic and avoid NAT port
+	// allocation conflicts. In the MKS IPv6-only, user-namespace environment
+	// iptables rules are not installed (--install-iptables-rules="false") and
+	// masquerade is disabled, and KPR runs correctly without them (as the
+	// forked 1.18.5 agent did). So only enforce this for BPF masquerade.
+	if params.DaemonConfig.EnableBPFMasquerade && !params.DaemonConfig.InstallIptRules {
+		return fmt.Errorf("BPF masquerade (--%s) requires iptables rules (--%s=\"true\")",
+			option.EnableBPFMasquerade, option.InstallIptRules)
 	}
 
 	if params.K8sClientConfig.IsEnabled() {
