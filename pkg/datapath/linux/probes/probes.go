@@ -541,7 +541,15 @@ func HaveDeadCodeElim() error {
 		return fmt.Errorf("get prog info: %w", err)
 	}
 	infoInst, err := info.Instructions()
-	if errors.Is(err, ebpf.ErrRestrictedKernel) {
+	// When Cilium runs user-namespaced with a BPF token instead of full
+	// init-namespace capabilities, the kernel hides the program's xlated
+	// instructions from the unprivileged process. ErrRestrictedKernel covers
+	// the pi.restricted case; ErrNotSupported covers the "zero-length insns
+	// due to insufficient permissions" case. In both, we cannot inspect the
+	// post-verifier program, so optimistically report dead-code elimination as
+	// supported (the 6.x kernel performs it; a genuinely missing feature would
+	// surface elsewhere).
+	if errors.Is(err, ebpf.ErrRestrictedKernel) || errors.Is(err, ebpf.ErrNotSupported) {
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("get instructions: %w", err)
