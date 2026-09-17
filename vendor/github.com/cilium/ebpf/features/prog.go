@@ -257,6 +257,22 @@ func HaveProgramHelper(pt ebpf.ProgramType, helper asm.BuiltinFunc) error {
 	return helperCache.Result(helperKey{pt, helper})
 }
 
+func programHelperInstructions(helper asm.BuiltinFunc) asm.Instructions {
+	insns := make(asm.Instructions, 0, 4)
+
+	// bpf_set_retval expects a scalar in R1. Linux 7.1 rejects the program
+	// when the probe passes the CGroupSock context pointer in R1.
+	if helper == asm.FnSetRetval {
+		insns = append(insns, asm.Mov.Imm(asm.R1, 0))
+	}
+
+	return append(insns,
+		helper.Call(),
+		asm.LoadImm(asm.R0, 0, asm.DWord),
+		asm.Return(),
+	)
+}
+
 func haveProgramHelper(pt ebpf.ProgramType, helper asm.BuiltinFunc) error {
 	if ok := helperProbeNotImplemented(pt); ok {
 		return fmt.Errorf("no feature probe for %v/%v", pt, helper)
@@ -267,13 +283,9 @@ func haveProgramHelper(pt ebpf.ProgramType, helper asm.BuiltinFunc) error {
 	}
 
 	spec := &ebpf.ProgramSpec{
-		Type: pt,
-		Instructions: asm.Instructions{
-			helper.Call(),
-			asm.LoadImm(asm.R0, 0, asm.DWord),
-			asm.Return(),
-		},
-		License: "GPL",
+		Type:         pt,
+		Instructions: programHelperInstructions(helper),
+		License:      "GPL",
 	}
 
 	switch pt {
