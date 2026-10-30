@@ -13,6 +13,7 @@ var Cell = cell.Module(
 	"loader",
 	"Loader",
 
+	cell.Provide(types.NewHostDPSignal),
 	cell.Provide(NewLoader),
 	cell.Provide(NewCompilationLock),
 )

@@ -101,7 +101,7 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep endpoint.Endpoint, lnc *
 
 		l.hostDpInitializedOnce.Do(func() {
 			l.logger.Debug("Initialized host datapath")
-			close(l.hostDpInitialized)
+			l.hostDpSignal.Close()
 		})
 
 		return hash, err

@@ -46,7 +46,7 @@ type loader struct {
 	registry *registry.MapRegistry
 
 	hostDpInitializedOnce sync.Once
-	hostDpInitialized     chan struct{}
+	hostDpSignal          *types.HostDPSignal
 
 	sysctl              sysctl.Sysctl
 	prefilter           prefilter.PreFilter
@@ -76,6 +76,7 @@ type Params struct {
 	Devices            statedb.Table[*tables.Device]
 	EPRestorer         promise.Promise[endpointstate.Restorer]
 	BIGTCPConfig       bigtcp.Config
+	HostDPSignal       *types.HostDPSignal
 
 	// Force map initialisation before loader.
 	bpf.MapGroup
@@ -94,7 +95,7 @@ func newLoader(p Params) *loader {
 		templateCache:       newObjectCache(p.Logger, p.ConfigWriter, filepath.Join(option.Config.StateDir, defaults.TemplatesDir)),
 		registry:            p.MapRegistry,
 		sysctl:              p.Sysctl,
-		hostDpInitialized:   make(chan struct{}),
+		hostDpSignal:        p.HostDPSignal,
 		prefilter:           p.Prefilter,
 		compilationLock:     p.CompilationLock,
 		configWriter:        p.ConfigWriter,
@@ -114,5 +115,5 @@ func (l *loader) CallsMapPath(id uint16) string {
 // HostDatapathInitialized returns a channel which is closed when the
 // host datapath has been loaded for the first time.
 func (l *loader) HostDatapathInitialized() <-chan struct{} {
-	return l.hostDpInitialized
+	return l.hostDpSignal.Initialized()
 }

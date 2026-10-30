@@ -202,7 +202,7 @@ struct debug_capture_msg {
 				     ##__VA_ARGS__);		\
 		})
 
-static __always_inline void cilium_dbg3(const struct __ctx_buff *ctx, __u8 type,
+static __always_inline void cilium_dbg3(const struct __ctx_buff *ctx __maybe_unused, __u8 type,
 					__u32 arg1, __u32 arg2, __u32 arg3)
 {
 	struct debug_msg msg = {
@@ -216,8 +216,7 @@ static __always_inline void cilium_dbg3(const struct __ctx_buff *ctx, __u8 type,
 		return;
 #endif
 	dbg_extension_hook(ctx, msg);
-	ctx_event_output(ctx, &cilium_events, BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event_simple(&msg, sizeof(msg));
 }
 
 
@@ -232,6 +231,7 @@ static __always_inline void cilium_dbg_capture2(const struct __ctx_buff *ctx, __
 {
 	__u64 ctx_len = ctx_full_len(ctx);
 	__u64 cap_len = min_t(__u64, TRACE_PAYLOAD_LEN, ctx_len);
+	cap_len = min_t(__u64, cap_len, MAX_CAPTURE_LEN);
 	struct debug_capture_msg msg = {
 		__notify_common_hdr(CILIUM_NOTIFY_DBG_CAPTURE, type),
 		__notify_pktcap_hdr((__u32)ctx_len, (__u16)cap_len, NOTIFY_CAPTURE_VER),
@@ -243,9 +243,7 @@ static __always_inline void cilium_dbg_capture2(const struct __ctx_buff *ctx, __
 		return;
 #endif
 	dbg_capture_extension_hook(ctx, msg);
-	ctx_event_output(ctx, &cilium_events,
-			 (cap_len << 32) | BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event(ctx, &msg, sizeof(msg), cap_len);
 }
 
 static __always_inline void cilium_dbg_capture(const struct __ctx_buff *ctx, __u8 type,

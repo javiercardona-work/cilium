@@ -242,6 +242,7 @@ __send_trace_notify(const struct __ctx_buff *ctx, enum trace_point obs_point,
 
 	vars->flags = ctx_classify(ctx, proto, obs_point);
 	vars->cap_len = compute_capture_len(ctx, monitor, vars->flags, obs_point);
+	vars->cap_len = min_t(__u64, vars->cap_len, MAX_CAPTURE_LEN);
 	vars->msg = (typeof(vars->msg)) {
 		__notify_common_hdr(CILIUM_NOTIFY_TRACE, obs_point),
 		__notify_pktcap_hdr((__u32)ctx_full_len(ctx),
@@ -267,9 +268,7 @@ __send_trace_notify(const struct __ctx_buff *ctx, enum trace_point obs_point,
 		}
 
 		trace_extension_hook(ctx, *msg);
-		ctx_event_output(ctx, &cilium_events,
-				 (vars->cap_len << 32) | BPF_F_CURRENT_CPU,
-				 msg, sizeof(*msg));
+		send_event(ctx, msg, sizeof(*msg), vars->cap_len);
 	}
 }
 

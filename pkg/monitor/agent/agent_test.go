@@ -7,6 +7,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/hive/hivetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,4 +131,19 @@ func TestRegisterListenerOnStoppedAgent(t *testing.T) {
 	a.RegisterNewListener(l)
 	assert.True(t, l.isClosed())
 	assert.Empty(t, l.recorded())
+}
+
+func TestProcessRingbufRecordDeliversSample(t *testing.T) {
+	a := newAgent(t.Context(), hivetest.Logger(t))
+	l := &fakeListener{}
+	a.RegisterNewListener(l)
+
+	want := []byte{api.MessageTypeTrace, 1, 2, 3}
+	a.processRingbufRecord(ringbuf.Record{RawSample: want})
+
+	recorded := l.recorded()
+	require.Len(t, recorded, 1)
+	assert.Equal(t, want, recorded[0].Data)
+	assert.Equal(t, 0, recorded[0].CPU)
+	assert.Equal(t, payload.EventSample, recorded[0].Type)
 }

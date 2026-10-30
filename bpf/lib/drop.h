@@ -96,6 +96,7 @@ int tail_drop_notify(struct __ctx_buff *ctx)
 
 	flags = ctx_classify(ctx, 0, TRACE_POINT_UNKNOWN);
 	cap_len = compute_capture_len(ctx, 0, flags, TRACE_POINT_UNKNOWN);
+	cap_len = min_t(__u64, cap_len, MAX_CAPTURE_LEN);
 
 	msg = (typeof(msg)) {
 		__notify_common_hdr(CILIUM_NOTIFY_DROP, (__u8)error),
@@ -112,9 +113,7 @@ int tail_drop_notify(struct __ctx_buff *ctx)
 	};
 
 	drop_extension_hook(ctx, msg);
-	ctx_event_output(ctx, &cilium_events,
-			 (cap_len << 32) | BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event(ctx, &msg, sizeof(msg), cap_len);
 
 	return exitcode;
 }

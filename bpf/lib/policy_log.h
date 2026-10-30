@@ -2,7 +2,7 @@
 /* Copyright Authors of Cilium */
 
 /*
- * Policy verdict notification via perf event ring buffer.
+ * Policy verdict notification through the Cilium events map.
  *
  * API:
  * void send_policy_verdict_notify(ctx, remote_label, dst_port, proto, dir,
@@ -99,6 +99,7 @@ send_policy_verdict_notify(const struct __ctx_buff *ctx, __u32 remote_label, __u
 		if (!ratelimit_check_and_take(&rkey, &settings))
 			return;
 	}
+	cap_len = min_t(__u64, cap_len, MAX_CAPTURE_LEN);
 
 	msg = (typeof(msg)) {
 		__notify_common_hdr(CILIUM_NOTIFY_POLICY_VERDICT, 0),
@@ -117,9 +118,7 @@ send_policy_verdict_notify(const struct __ctx_buff *ctx, __u32 remote_label, __u
 	};
 
 	policy_verdict_extension_hook(ctx, msg);
-	ctx_event_output(ctx, &cilium_events,
-			 (cap_len << 32) | BPF_F_CURRENT_CPU,
-			 &msg, sizeof(msg));
+	send_event(ctx, &msg, sizeof(msg), cap_len);
 }
 #else
 static __always_inline void
