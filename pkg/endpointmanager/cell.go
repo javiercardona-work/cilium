@@ -115,6 +115,10 @@ type EndpointsLookup interface {
 	// HostEndpointExists returns true if the host endpoint exists.
 	HostEndpointExists() bool
 
+	// HostEndpointAvailable returns a channel that is closed after the host
+	// endpoint is exposed and its ID is available.
+	HostEndpointAvailable() <-chan struct{}
+
 	// GetIngressEndpoint returns the ingress endpoint.
 	GetIngressEndpoint() *endpoint.Endpoint
 

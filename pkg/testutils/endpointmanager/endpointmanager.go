@@ -115,6 +115,10 @@ func (*MockEndpointManager) HostEndpointExists() bool {
 	panic("MockEndpointManager.HostEndpointExists not implemented")
 }
 
+func (*MockEndpointManager) HostEndpointAvailable() <-chan struct{} {
+	panic("MockEndpointManager.HostEndpointAvailable not implemented")
+}
+
 func (*MockEndpointManager) GetIngressEndpoint() *endpoint.Endpoint {
 	panic("MockEndpointManager.GetIngressEndpoint not implemented")
 }

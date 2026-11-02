@@ -31,6 +31,12 @@ func (mgr *endpointManager) HostEndpointExists() bool {
 	return mgr.GetHostEndpoint() != nil
 }
 
+// HostEndpointAvailable returns a channel that is closed after the host
+// endpoint is exposed and its ID is available.
+func (mgr *endpointManager) HostEndpointAvailable() <-chan struct{} {
+	return mgr.hostEndpointAvailable
+}
+
 func (mgr *endpointManager) startNodeLabelsObserver(old map[string]string) {
 	mgr.localNodeStore.Observe(context.Background(), func(ln node.LocalNode) {
 		oldIdtyLabels, _ := labelsfilter.Filter(labels.Map2Labels(old, labels.LabelSourceK8s))

@@ -914,6 +914,75 @@ func TestMissingNodeLabelsUpdate(t *testing.T) {
 	)
 }
 
+func TestHostEndpointAvailableAfterExposure(t *testing.T) {
+	const templateHostEndpointID = uint64(0xffff)
+
+	originalHostEndpointID, _ := node.GetEndpointID()
+	t.Cleanup(func() {
+		node.SetEndpointID(originalHostEndpointID)
+	})
+
+	for _, tt := range []struct {
+		name string
+		id   int
+	}{
+		{name: "fresh host endpoint"},
+		{name: "restored host endpoint", id: 1234},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			node.SetEndpointID(templateHostEndpointID)
+
+			logger := hivetest.Logger(t)
+			s := setupEndpointManagerSuite(t)
+			mgr := New(logger, nil, &dummyEpSyncher{}, nil, nil, nil, defaultEndpointManagerConfig)
+
+			available := mgr.HostEndpointAvailable()
+			requireChannelOpen(t, available)
+
+			model := newTestEndpointModel(tt.id, endpoint.StateReady)
+			ep, err := endpoint.NewEndpointFromChangeModel(
+				makeTestEndpointParams(logger, s.repo),
+				nil,
+				&endpoint.FakeEndpointProxy{},
+				model,
+				nil,
+			)
+			require.NoError(t, err)
+			ep.SetIsHost(true)
+			t.Cleanup(ep.Stop)
+
+			require.NoError(t, mgr.expose(ep))
+			requireChannelClosed(t, available)
+			require.Same(t, ep, mgr.GetHostEndpoint())
+
+			hostEndpointID, initialized := node.GetEndpointID()
+			require.True(t, initialized)
+			require.Equal(t, ep.GetID(), hostEndpointID)
+			require.NotEqual(t, templateHostEndpointID, hostEndpointID)
+		})
+	}
+}
+
+func requireChannelOpen(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-ch:
+		t.Fatal("channel is closed")
+	default:
+	}
+}
+
+func requireChannelClosed(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-ch:
+	default:
+		t.Fatal("channel is open")
+	}
+}
+
 func TestUpdateHostEndpointLabels(t *testing.T) {
 	logger := hivetest.Logger(t)
 	kvstoreSync := ipcache.NewIPIdentitySynchronizer(logger, kvstore.SetupDummy(t, kvstore.DisabledBackendName))

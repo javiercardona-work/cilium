@@ -28,7 +28,6 @@ import (
 	"github.com/cilium/cilium/pkg/labelsfilter"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/mac"
-	"github.com/cilium/cilium/pkg/node"
 	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/time"
 )
@@ -95,12 +94,6 @@ func ReadEPsFromDirNames(ctx context.Context, logger *slog.Logger, parser Endpoi
 			}
 		} else {
 			possibleEPs[ep.ID] = ep
-		}
-
-		// We need to save the host endpoint ID as we'll need it to regenerate
-		// other endpoints.
-		if ep.IsHost() {
-			node.SetEndpointID(ep.GetID())
 		}
 	}
 

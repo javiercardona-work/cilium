@@ -104,6 +104,11 @@ type endpointManager struct {
 	// Allocator for local endpoint identifiers.
 	epIDAllocator *epIDAllocator
 
+	// hostEndpointAvailable is closed after the host endpoint is exposed and
+	// its ID is available.
+	hostEndpointAvailable     chan struct{}
+	hostEndpointAvailableOnce sync.Once
+
 	monitorAgent monitoragent.Agent
 
 	policyUpdateCallbackDetails
@@ -127,6 +132,7 @@ func New(logger *slog.Logger, registry *metrics.Registry, epSynchronizer Endpoin
 		controllers:                  controller.NewManager(),
 		localNodeStore:               lns,
 		epIDAllocator:                newEPIDAllocator(),
+		hostEndpointAvailable:        make(chan struct{}),
 		monitorAgent:                 monitorAgent,
 		policyUpdateCallbackDetails:  newPolicyUpdateCallbackDetails(),
 	}
@@ -679,6 +685,8 @@ func (mgr *endpointManager) expose(ep *endpoint.Endpoint) error {
 		return err
 	}
 
+	isHost := ep.IsHost()
+
 	mgr.mutex.Lock()
 	// Get a copy of the identifiers before exposing the endpoint
 	identifiers := ep.Identifiers()
@@ -687,6 +695,12 @@ func (mgr *endpointManager) expose(ep *endpoint.Endpoint) error {
 	mgr.mcastManager.AddAddress(ep.IPv6)
 	mgr.updateIDReferenceLocked(ep)
 	mgr.updateReferencesLocked(ep, identifiers)
+	if isHost {
+		mgr.hostEndpointAvailableOnce.Do(func() {
+			node.SetEndpointID(ep.GetID())
+			close(mgr.hostEndpointAvailable)
+		})
+	}
 	mgr.mutex.Unlock()
 
 	ep.InitEndpointHealth(mgr.health)

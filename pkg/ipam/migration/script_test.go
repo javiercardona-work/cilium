@@ -294,6 +294,7 @@ func (noopEndpointManager) GetEndpointList(endpointapi.GetEndpointParams) []*mod
 func (noopEndpointManager) EndpointExists(uint16) bool             { return false }
 func (noopEndpointManager) GetHostEndpoint() *endpoint.Endpoint    { return nil }
 func (noopEndpointManager) HostEndpointExists() bool               { return false }
+func (noopEndpointManager) HostEndpointAvailable() <-chan struct{} { return nil }
 func (noopEndpointManager) GetIngressEndpoint() *endpoint.Endpoint { return nil }
 func (noopEndpointManager) IngressEndpointExists() bool            { return false }
 func (noopEndpointManager) AddEndpoint(*endpoint.Endpoint) error   { return nil }

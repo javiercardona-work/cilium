@@ -157,8 +157,6 @@ func (c *endpointCreator) AddHostEndpoint(ctx context.Context) error {
 		return err
 	}
 
-	node.SetEndpointID(ep.GetID())
-
 	c.params.EndpointManager.InitHostEndpointLabels(ctx)
 
 	return nil

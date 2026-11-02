@@ -213,6 +213,11 @@ func (o *orchestrator) reconciler(ctx context.Context, health cell.Health) error
 		return err
 	}
 
+	health.OK("Waiting for host endpoint")
+	if err := o.waitForHostEndpoint(ctx); err != nil {
+		return err
+	}
+
 	var (
 		request   = reinitializeRequest{ctx: ctx}
 		retryChan <-chan time.Time
@@ -282,6 +287,15 @@ func (o *orchestrator) reconciler(ctx context.Context, health cell.Health) error
 		if err := limiter.Wait(ctx); err != nil {
 			return err
 		}
+	}
+}
+
+func (o *orchestrator) waitForHostEndpoint(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-o.params.EndpointManager.HostEndpointAvailable():
+		return nil
 	}
 }
 
