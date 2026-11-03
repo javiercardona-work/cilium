@@ -278,7 +278,7 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 		}
 	}
 
-	currentEndpoints := map[string]endpointsEvent{}
+	currentEndpoints := newEndpointCache()
 	processEndpointsEvent := func(txn writer.WriteTxn, key bufferKey, val bufferValue) {
 		switch val.kind {
 		case resource.Sync:
@@ -290,7 +290,7 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 			}
 
 			// Delete all previous endpoints
-			for _, ev := range currentEndpoints {
+			for _, ev := range currentEndpoints.byName {
 				for addr, prevBe := range ev.backends {
 					addrs := make([]loadbalancer.L3n4Addr, 0, len(prevBe.Ports))
 					for l4Addr := range prevBe.Ports {
@@ -305,7 +305,7 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 					}
 				}
 			}
-			clear(currentEndpoints)
+			currentEndpoints.clear()
 
 			// Insert the replacements
 			for _, eps := range val.endpointsReplace {
@@ -323,11 +323,11 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 					continue
 				}
 
-				currentEndpoints[eps.EndpointSliceName] = endpointsEvent{
+				currentEndpoints.update(endpointsEvent{
 					name:     eps.EndpointSliceName,
 					svcName:  name,
 					backends: eps.Backends,
-				}
+				})
 			}
 
 			// Refresh the remaining frontends that now have no backends.
@@ -349,35 +349,7 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 			// Convert [k8s.Endpoints] to [loadbalancer.Backend]
 			backends := convertEndpoints(p.Log, p.ExtConfig, name, allEps.Backends())
 
-			// Find orphaned backends. We are using iter.Seq to avoid unnecessary allocations.
-			var orphans iter.Seq[loadbalancer.L3n4Addr] = func(yield func(loadbalancer.L3n4Addr) bool) {
-				for ep := range allEps.All() {
-					previous, found := currentEndpoints[ep.name]
-					if !found {
-						continue
-					}
-					for addr, prevBe := range previous.backends {
-						be, foundBe := ep.backends[addr]
-						for l4Addr := range prevBe.Ports {
-							foundPort := false
-							if foundBe {
-								_, foundPort = be.Ports[l4Addr]
-							}
-							if !foundPort {
-								if !yield(
-									loadbalancer.NewL3n4Addr(
-										l4Addr.Protocol,
-										addr,
-										l4Addr.Port,
-										loadbalancer.ScopeExternal,
-									)) {
-									return
-								}
-							}
-						}
-					}
-				}
-			}
+			orphans := currentEndpoints.orphans(allEps, name)
 
 			err = p.Writer.UpsertAndReleaseBackends(txn, name, source.Kubernetes, backends, orphans)
 			if err != nil {
@@ -386,12 +358,8 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 			}
 
 			for ep := range allEps.All() {
-				if len(ep.backends) == 0 {
-					delete(currentEndpoints, ep.name)
-				} else {
-					ep.svcName = name
-					currentEndpoints[ep.name] = ep
-				}
+				ep.svcName = name
+				currentEndpoints.update(ep)
 			}
 
 			rh.update("eps:"+name.String(), err)
@@ -465,6 +433,113 @@ type endpointsEvent struct {
 	name     string
 	svcName  loadbalancer.ServiceName
 	backends map[cmtypes.AddrCluster]*k8s.Backend
+}
+
+type endpointCache struct {
+	byName    map[string]endpointsEvent
+	byService map[loadbalancer.ServiceName]map[string]struct{}
+}
+
+func newEndpointCache() *endpointCache {
+	return &endpointCache{
+		byName:    map[string]endpointsEvent{},
+		byService: map[loadbalancer.ServiceName]map[string]struct{}{},
+	}
+}
+
+func (cache *endpointCache) clear() {
+	clear(cache.byName)
+	clear(cache.byService)
+}
+
+func (cache *endpointCache) removeFromService(serviceName loadbalancer.ServiceName, name string) {
+	names := cache.byService[serviceName]
+	delete(names, name)
+	if len(names) == 0 {
+		delete(cache.byService, serviceName)
+	}
+}
+
+func (cache *endpointCache) update(ep endpointsEvent) {
+	previous, found := cache.byName[ep.name]
+	if found && previous.svcName != ep.svcName {
+		cache.removeFromService(previous.svcName, ep.name)
+	}
+
+	if len(ep.backends) == 0 {
+		delete(cache.byName, ep.name)
+		if found {
+			cache.removeFromService(previous.svcName, ep.name)
+		}
+		return
+	}
+
+	cache.byName[ep.name] = ep
+	names := cache.byService[ep.svcName]
+	if names == nil {
+		names = map[string]struct{}{}
+		cache.byService[ep.svcName] = names
+	}
+	names[ep.name] = struct{}{}
+}
+
+// orphans returns cached backend addresses that no endpoint slice for the
+// service references after the current batch.
+func (cache *endpointCache) orphans(updated allEndpoints, serviceName loadbalancer.ServiceName) iter.Seq[loadbalancer.L3n4Addr] {
+	return func(yield func(loadbalancer.L3n4Addr) bool) {
+		changed := map[string]struct{}{}
+		present := map[loadbalancer.L3n4Addr]struct{}{}
+
+		addPresent := func(ep endpointsEvent) {
+			for addr, backend := range ep.backends {
+				for l4Addr := range backend.Ports {
+					present[loadbalancer.NewL3n4Addr(
+						l4Addr.Protocol,
+						addr,
+						l4Addr.Port,
+						loadbalancer.ScopeExternal,
+					)] = struct{}{}
+				}
+			}
+		}
+
+		for ep := range updated.All() {
+			changed[ep.name] = struct{}{}
+			addPresent(ep)
+		}
+
+		// Include unchanged slices of the same service. A backend remains in use
+		// until every slice that references it removes it.
+		for name := range cache.byService[serviceName] {
+			if _, changed := changed[name]; changed {
+				continue
+			}
+			addPresent(cache.byName[name])
+		}
+
+		// Inspect every cached slice of this service. Mark each yielded address
+		// as present so a shared orphan is released only once.
+		for name := range cache.byService[serviceName] {
+			ep := cache.byName[name]
+			for addr, backend := range ep.backends {
+				for l4Addr := range backend.Ports {
+					backendAddr := loadbalancer.NewL3n4Addr(
+						l4Addr.Protocol,
+						addr,
+						l4Addr.Port,
+						loadbalancer.ScopeExternal,
+					)
+					if _, found := present[backendAddr]; found {
+						continue
+					}
+					present[backendAddr] = struct{}{}
+					if !yield(backendAddr) {
+						return
+					}
+				}
+			}
+		}
+	}
 }
 
 // allEndpoints holds one or more [k8s.Endpoints] that target the same service within a single buffer.

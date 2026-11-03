@@ -143,3 +143,119 @@ func TestConvertEndpointsWeightZeroForcesMaintenance(t *testing.T) {
 	require.Zero(t, backends[0].Weight)
 	require.Equal(t, loadbalancer.BackendStateMaintenance, backends[0].State)
 }
+
+func testBackendWithPorts(ports ...uint16) *k8s.Backend {
+	backend := &k8s.Backend{Ports: map[loadbalancer.L4Addr][]string{}}
+	for _, port := range ports {
+		backend.Ports[loadbalancer.L4Addr{
+			Protocol: loadbalancer.TCP,
+			Port:     port,
+		}] = nil
+	}
+	return backend
+}
+
+func testEndpointEvent(serviceName loadbalancer.ServiceName, name string, backends map[cmtypes.AddrCluster]*k8s.Backend) endpointsEvent {
+	return endpointsEvent{
+		name:     "default/" + name,
+		svcName:  serviceName,
+		backends: backends,
+	}
+}
+
+func collectOrphanBackends(current []endpointsEvent, updated ...endpointsEvent) []loadbalancer.L3n4Addr {
+	cache := newEndpointCache()
+	for _, ep := range current {
+		cache.update(ep)
+	}
+	batch := allEndpoints{}
+	for _, ep := range updated {
+		if batch.head.name == "" {
+			batch.head = ep
+		} else {
+			batch.tail = append(batch.tail, ep)
+		}
+	}
+	return slices.Collect(cache.orphans(batch, updated[0].svcName))
+}
+
+func TestOrphanBackendsAcrossEndpointSlices(t *testing.T) {
+	serviceName := loadbalancer.NewServiceName("default", "test")
+	otherServiceName := loadbalancer.NewServiceName("default", "other")
+	ip1 := cmtypes.MustParseAddrCluster("10.0.0.1")
+	ip2 := cmtypes.MustParseAddrCluster("10.0.0.2")
+	address := func(ip cmtypes.AddrCluster, port uint16) loadbalancer.L3n4Addr {
+		return loadbalancer.NewL3n4Addr(
+			loadbalancer.TCP,
+			ip,
+			port,
+			loadbalancer.ScopeExternal,
+		)
+	}
+
+	t.Run("delete one of two slices with a shared backend", func(t *testing.T) {
+		slice1 := testEndpointEvent(serviceName, "slice-1",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80)})
+		slice2 := testEndpointEvent(serviceName, "slice-2",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80)})
+		current := []endpointsEvent{slice1, slice2}
+
+		deletedSlice1 := testEndpointEvent(serviceName, "slice-1", nil)
+		require.Empty(t, collectOrphanBackends(current, deletedSlice1))
+	})
+
+	t.Run("delete the unique backend of one slice", func(t *testing.T) {
+		slice1 := testEndpointEvent(serviceName, "slice-1",
+			map[cmtypes.AddrCluster]*k8s.Backend{
+				ip1: testBackendWithPorts(80),
+				ip2: testBackendWithPorts(80),
+			})
+		slice2 := testEndpointEvent(serviceName, "slice-2",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80)})
+		current := []endpointsEvent{slice1, slice2}
+
+		deletedSlice1 := testEndpointEvent(serviceName, "slice-1", nil)
+		require.Equal(t,
+			[]loadbalancer.L3n4Addr{address(ip2, 80)},
+			collectOrphanBackends(current, deletedSlice1),
+		)
+	})
+
+	t.Run("remove a backend from the only slice", func(t *testing.T) {
+		slice1 := testEndpointEvent(serviceName, "slice-1",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80)})
+		current := []endpointsEvent{slice1}
+
+		deletedSlice1 := testEndpointEvent(serviceName, "slice-1", nil)
+		require.Equal(t,
+			[]loadbalancer.L3n4Addr{address(ip1, 80)},
+			collectOrphanBackends(current, deletedSlice1),
+		)
+	})
+
+	t.Run("keep a port that another slice references", func(t *testing.T) {
+		slice1 := testEndpointEvent(serviceName, "slice-1",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80, 443)})
+		slice2 := testEndpointEvent(serviceName, "slice-2",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(443)})
+		current := []endpointsEvent{slice1, slice2}
+
+		updatedSlice1 := testEndpointEvent(serviceName, "slice-1",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80)})
+		require.Empty(t, collectOrphanBackends(current, updatedSlice1))
+	})
+
+	t.Run("ignore backends from another service", func(t *testing.T) {
+		slice1 := testEndpointEvent(serviceName, "slice-1",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80)})
+		otherSlice := testEndpointEvent(otherServiceName, "slice-9",
+			map[cmtypes.AddrCluster]*k8s.Backend{ip1: testBackendWithPorts(80)})
+		current := []endpointsEvent{slice1, otherSlice}
+
+		deletedSlice1 := testEndpointEvent(serviceName, "slice-1", nil)
+		require.Equal(t,
+			[]loadbalancer.L3n4Addr{address(ip1, 80)},
+			collectOrphanBackends(current, deletedSlice1),
+		)
+	})
+}
