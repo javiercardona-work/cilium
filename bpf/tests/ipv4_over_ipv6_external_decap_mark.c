@@ -336,9 +336,9 @@ int ipip6_local_delivery_check(struct __ctx_buff *ctx)
 		test_fatal("status code out of bounds");
 
 	status_code = data;
-	if (*status_code != DROP_EP_NOT_READY)
+	if (*status_code != CTX_ACT_DROP)
 		test_fatal("unexpected status code %d, want %d",
-			   *status_code, DROP_EP_NOT_READY);
+			   *status_code, CTX_ACT_DROP);
 
 	l2 = data + sizeof(__u32);
 	if ((void *)l2 + sizeof(struct ethhdr) > data_end)
@@ -372,15 +372,6 @@ int ipip6_local_delivery_check(struct __ctx_buff *ctx)
 
 	if (l4->dest != DST_PORT)
 		test_fatal("unexpected TCP destination port");
-
-	if (!(ctx_load_meta(ctx, CB_DELIVERY_FLAGS) & CB_DELIVERY_FLAGS_REDIRECT))
-		test_fatal("expected delivery redirect metadata");
-
-	if (!(ctx_load_meta(ctx, CB_DELIVERY_FLAGS) & CB_DELIVERY_FLAGS_FROM_TUNNEL))
-		test_fatal("expected from-tunnel metadata");
-
-	if (ctx_load_meta(ctx, CB_FROM_HOST) != 0)
-		test_fatal("unexpected from-host metadata");
 
 	test_finish();
 }

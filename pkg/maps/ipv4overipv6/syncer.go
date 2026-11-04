@@ -7,7 +7,7 @@ import (
 	"net"
 
 	"github.com/cilium/cilium/pkg/bpf"
-	datapath "github.com/cilium/cilium/pkg/datapath/types"
+	"github.com/cilium/cilium/pkg/node"
 	nodeTypes "github.com/cilium/cilium/pkg/node/types"
 	"github.com/cilium/cilium/pkg/option"
 )
@@ -34,7 +34,7 @@ func newNodeMapSyncer(m mapOps) *nodeMapSyncer {
 	}
 }
 
-var _ datapath.NodeHandler = (*nodeMapSyncer)(nil)
+var _ node.Handler = (*nodeMapSyncer)(nil)
 
 func (s *nodeMapSyncer) Name() string {
 	return syncerName

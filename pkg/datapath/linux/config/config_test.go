@@ -190,7 +190,7 @@ func TestPrivilegedWriteNodeConfigFallsBackToCiliumInternalIPv4ForDirectRouting(
 		NodeAddressing: fakenode.NewAddressing(),
 		Sysctl:         sysctl.NewDirectSysctl(afero.NewOsFs(), "/proc"),
 		NodeMap:        fake.NewFakeNodeMapV2(),
-		KPRConfig:      kpr.KPRConfig{EnableNodePort: true},
+		KPRConfig:      kpr.KPRConfig{KubeProxyReplacement: true},
 	})
 	require.NoError(t, err)
 
@@ -226,16 +226,11 @@ func TestPrivilegedWriteNodeConfigBPFIPv4OverIPv6ExternalDecapMark(t *testing.T)
 	option.Config.EnableBPFIPv4OverIPv6 = true
 	option.Config.BPFIPv4OverIPv6ExternalDecapMark = 0xCAFE
 
-	ciliumNet := createMainLink(defaults.SecondHostDevice, t)
-	defer netlink.LinkDel(ciliumNet)
-	ciliumHost := createMainLink(defaults.HostDevice, t)
-	defer netlink.LinkDel(ciliumHost)
-
 	cfg, err := NewHeaderfileWriter(WriterParams{
-		NodeAddressing: fakeTypes.NewNodeAddressing(),
+		NodeAddressing: fakenode.NewAddressing(),
 		Sysctl:         sysctl.NewDirectSysctl(afero.NewOsFs(), "/proc"),
 		NodeMap:        fake.NewFakeNodeMapV2(),
-		KPRConfig:      kpr.KPRConfig{EnableNodePort: true},
+		KPRConfig:      kpr.KPRConfig{KubeProxyReplacement: true},
 	})
 	require.NoError(t, err)
 

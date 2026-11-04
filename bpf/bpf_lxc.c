@@ -1817,7 +1817,8 @@ int cil_from_container(struct __ctx_buff *ctx)
 			void *de, *dee;
 			struct iphdr *i4;
 			if (revalidate_data(ctx, &de, &dee, &i4)) {
-				struct remote_endpoint_info *ri = lookup_ip4_remote_endpoint(i4->daddr, 0);
+				const struct remote_endpoint_info *ri =
+					lookup_ip4_remote_endpoint(i4->daddr, 0);
 				union v6addr rv6;
 
 				if (ri && !identity_is_host(ri->sec_identity) &&

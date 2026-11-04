@@ -14,7 +14,7 @@ import (
 	"github.com/cilium/hive/cell"
 
 	cmtypes "github.com/cilium/cilium/pkg/clustermesh/types"
-	datapath "github.com/cilium/cilium/pkg/datapath/types"
+	"github.com/cilium/cilium/pkg/node"
 	nodeManager "github.com/cilium/cilium/pkg/node/manager"
 	nodeTypes "github.com/cilium/cilium/pkg/node/types"
 	"github.com/cilium/cilium/pkg/time"
@@ -23,17 +23,17 @@ import (
 var _ nodeManager.NodeManager = (*fakeNodeManager)(nil)
 
 type fakeNodeManager struct {
-	subscribed   datapath.NodeHandler
+	subscribed   node.Handler
 	subscribeCnt int
 	unsubscribe  int
 }
 
-func (m *fakeNodeManager) Subscribe(h datapath.NodeHandler) {
+func (m *fakeNodeManager) Subscribe(h node.Handler) {
 	m.subscribed = h
 	m.subscribeCnt++
 }
 
-func (m *fakeNodeManager) Unsubscribe(h datapath.NodeHandler) {
+func (m *fakeNodeManager) Unsubscribe(h node.Handler) {
 	if m.subscribed == h {
 		m.subscribed = nil
 	}
