@@ -346,8 +346,14 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 			)
 			var err error
 
-			// Convert [k8s.Endpoints] to [loadbalancer.Backend]
-			backends := convertEndpoints(p.Log, p.ExtConfig, name, allEps.Backends())
+			// Convert [k8s.Endpoints] to [loadbalancer.Backend].
+			// Reapply metadata from a surviving slice before the current events.
+			backends := convertEndpoints(
+				p.Log,
+				p.ExtConfig,
+				name,
+				currentEndpoints.backendsWithSurvivors(allEps, name),
+			)
 
 			orphans := currentEndpoints.orphans(allEps, name)
 
@@ -481,6 +487,96 @@ func (cache *endpointCache) update(ep endpointsEvent) {
 		cache.byService[ep.svcName] = names
 	}
 	names[ep.name] = struct{}{}
+}
+
+// backendsWithSurvivors returns the current event backends. It first returns
+// metadata for a backend that a changed slice removed but another slice still
+// references. The current events remain the final metadata owner.
+func (cache *endpointCache) backendsWithSurvivors(
+	updated allEndpoints,
+	serviceName loadbalancer.ServiceName,
+) iter.Seq2[cmtypes.AddrCluster, *k8s.Backend] {
+	type backendKey struct {
+		addr   cmtypes.AddrCluster
+		l4Addr loadbalancer.L4Addr
+	}
+	type backendValue struct {
+		addr    cmtypes.AddrCluster
+		backend *k8s.Backend
+	}
+
+	return func(yield func(cmtypes.AddrCluster, *k8s.Backend) bool) {
+		var removed map[backendKey]struct{}
+		for ep := range updated.All() {
+			previous, found := cache.byName[ep.name]
+			if found {
+				for addr, previousBackend := range previous.backends {
+					currentBackend := ep.backends[addr]
+					for l4Addr := range previousBackend.Ports {
+						if currentBackend != nil {
+							if _, found := currentBackend.Ports[l4Addr]; found {
+								continue
+							}
+						}
+						if removed == nil {
+							removed = map[backendKey]struct{}{}
+						}
+						removed[backendKey{addr, l4Addr}] = struct{}{}
+					}
+				}
+			}
+		}
+
+		if len(removed) == 0 {
+			for addr, backend := range updated.Backends() {
+				if !yield(addr, backend) {
+					return
+				}
+			}
+			return
+		}
+
+		effective := map[string]endpointsEvent{}
+		for name := range cache.byService[serviceName] {
+			effective[name] = cache.byName[name]
+		}
+		for ep := range updated.All() {
+			if len(ep.backends) == 0 {
+				delete(effective, ep.name)
+			} else {
+				effective[ep.name] = ep
+			}
+		}
+
+		selected := map[backendKey]struct{}{}
+		var survivors []backendValue
+		for _, name := range slices.Sorted(maps.Keys(effective)) {
+			for addr, backend := range effective[name].backends {
+				for l4Addr := range backend.Ports {
+					key := backendKey{addr, l4Addr}
+					if _, found := removed[key]; !found {
+						continue
+					}
+					if _, found := selected[key]; found {
+						continue
+					}
+					selected[key] = struct{}{}
+					survivors = append(survivors, backendValue{addr, backend})
+				}
+			}
+		}
+
+		for _, backend := range survivors {
+			if !yield(backend.addr, backend.backend) {
+				return
+			}
+		}
+		for addr, backend := range updated.Backends() {
+			if !yield(addr, backend) {
+				return
+			}
+		}
+	}
 }
 
 // orphans returns cached backend addresses that no endpoint slice for the

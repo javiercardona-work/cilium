@@ -1,0 +1,127 @@
+#! --lb-test-fault-probability=0.0
+
+# Verify that a backend keeps the metadata from a surviving EndpointSlice when
+# an old node and a replacement node reuse the same address.
+
+hive start
+
+k8s/add service.yaml endpointslice-old.yaml
+k8s/add endpointslice-new.yaml
+db/cmp backends backends-new.table
+db/cmp frontends frontends-local.table
+
+# A late update from the old slice can replace the shared backend metadata.
+k8s/update endpointslice-old-updated.yaml
+db/cmp backends backends-old.table
+db/cmp frontends frontends-empty.table
+
+# Removing the old slice must restore metadata from the surviving new slice.
+k8s/delete endpointslice-old-updated.yaml
+db/cmp backends backends-new.table
+db/cmp frontends frontends-local.table
+
+#####
+
+-- backends-new.table --
+Service    Address            NodeName
+test/echo  10.244.1.1:80/TCP  testnode
+
+-- backends-old.table --
+Service    Address            NodeName
+test/echo  10.244.1.1:80/TCP  oldnode
+
+-- frontends-local.table --
+Address               Type       ServiceName  PortName  Backends            Status
+10.96.50.104:80/TCP   ClusterIP  test/echo    http      10.244.1.1:80/TCP   Done
+
+-- frontends-empty.table --
+Address               Type       ServiceName  PortName  Backends  Status
+10.96.50.104:80/TCP   ClusterIP  test/echo    http                Done
+
+-- service.yaml --
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: test
+spec:
+  clusterIP: 10.96.50.104
+  clusterIPs:
+  - 10.96.50.104
+  internalTrafficPolicy: Local
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  selector:
+    name: echo
+  type: ClusterIP
+
+-- endpointslice-old.yaml --
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  labels:
+    kubernetes.io/service-name: echo
+  name: echo-old
+  namespace: test
+addressType: IPv4
+endpoints:
+- addresses:
+  - 10.244.1.1
+  conditions:
+    ready: true
+    serving: true
+    terminating: false
+  nodeName: oldnode
+ports:
+- name: http
+  port: 80
+  protocol: TCP
+
+-- endpointslice-old-updated.yaml --
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  annotations:
+    test.cilium.io/revision: "2"
+  labels:
+    kubernetes.io/service-name: echo
+  name: echo-old
+  namespace: test
+addressType: IPv4
+endpoints:
+- addresses:
+  - 10.244.1.1
+  conditions:
+    ready: true
+    serving: true
+    terminating: false
+  nodeName: oldnode
+ports:
+- name: http
+  port: 80
+  protocol: TCP
+
+-- endpointslice-new.yaml --
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  labels:
+    kubernetes.io/service-name: echo
+  name: echo-new
+  namespace: test
+addressType: IPv4
+endpoints:
+- addresses:
+  - 10.244.1.1
+  conditions:
+    ready: true
+    serving: true
+    terminating: false
+  nodeName: testnode
+ports:
+- name: http
+  port: 80
+  protocol: TCP
